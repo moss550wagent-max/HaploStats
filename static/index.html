@@ -3,439 +3,505 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HaploStats — Clinical HLA Match Dashboard</title>
+<title>HaploStats — Population Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
 <style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
   :root {
-    --bg: #0f1923;
-    --card: #1a2d3d;
-    --border: #2a4a5e;
-    --text: #d4e6f0;
-    --text-dim: #7a9db5;
-    --green: #00c853;
-    --green-bg: #00c85322;
-    --yellow: #ffa000;
-    --yellow-bg: #ffa00022;
-    --red: #ff1744;
-    --red-bg: #ff174422;
-    --gray: #546e7a;
-    --accent: #2979ff;
+    --white:       #ffffff;
+    --bg:          #f8f9fb;
+    --border:      #e2e6ee;
+    --shadow:      0 4px 24px rgba(0, 0, 0, 0.06);
+    --text:        #1a1d23;
+    --text-dim:    #6b7280;
+    --text-faint:  #9ca3af;
+    --blue:        #0066cc;
+    --blue-hover:  #0052a3;
+    --blue-light:  #e8f1fa;
+    --green:       #059669;
+    --amber:       #d97706;
+    --red:         #dc2626;
+    --row-even:    #fafbfc;
+    --font:        'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { font-size: 15px; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg);
+    font-family: var(--font);
+    background: var(--white);
     color: var(--text);
-    padding: 20px;
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 80px;
   }
+
+  /* ── Header ─────────────────────────────────────────────── */
+
   .header {
     text-align: center;
-    padding: 20px 0 30px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 30px;
+    margin-bottom: 32px;
   }
-  .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-  .header h1 span { color: var(--accent); }
-  .header p { color: var(--text-dim); margin-top: 6px; font-size: 14px; }
-  .header .version { color: var(--text-dim); font-size: 12px; margin-top: 4px; }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+  .header h1 span { color: var(--blue); }
+  .header p {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-top: 5px;
+  }
+  .header .version {
+    color: var(--text-faint);
+    font-size: 12px;
+    margin-top: 2px;
+  }
 
-  .panels {
+  /* ── Main Card ──────────────────────────────────────────── */
+
+  .card {
+    width: 100%;
+    max-width: 960px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 32px 36px;
+    margin-bottom: 28px;
+  }
+
+  .card-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: var(--text);
+  }
+  .card-title small {
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-left: 8px;
+  }
+
+  /* ── Input Grid ─────────────────────────────────────────── */
+
+  .input-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    max-width: 1400px;
-    margin: 0 auto 30px;
+    gap: 14px 20px;
+    margin-bottom: 22px;
   }
-  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
-
-  .panel {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-  }
-  .panel h2 {
-    font-size: 16px;
-    font-weight: 600;
-    margin-bottom: 16px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  .panel.patient h2 { color: var(--accent); }
-  .panel.donor h2 { color: #ff6d00; }
-
-  .locus-row {
+  .input-group {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
+    flex-direction: column;
   }
-  .locus-row label {
-    width: 80px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-dim);
-    flex-shrink: 0;
-  }
-  .locus-row input {
-    flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
-    color: var(--text);
-    font-size: 13px;
-    font-family: 'SF Mono', 'Consolas', monospace;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-  .locus-row input:focus { border-color: var(--accent); }
-  .locus-row input::placeholder { color: var(--gray); font-size: 11px; }
-
-  .controls {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    align-items: center;
-    max-width: 1400px;
-    margin: 0 auto 30px;
-    flex-wrap: wrap;
-  }
-  .controls select {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px 14px;
-    color: var(--text);
-    font-size: 14px;
-    outline: none;
-    cursor: pointer;
-  }
-  .btn-compare {
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 12px 36px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-  }
-  .btn-compare:hover { opacity: 0.9; }
-  .btn-compare:active { transform: scale(0.97); }
-  .btn-compare:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  .status { text-align: center; color: var(--text-dim); font-size: 14px; margin-bottom: 16px; max-width: 1400px; margin: 0 auto 20px; }
-
-  .results {
-    max-width: 1400px;
-    margin: 0 auto;
-    display: none;
-  }
-  .results.visible { display: block; }
-
-  .match-banner {
-    text-align: center;
-    padding: 20px;
-    border-radius: 12px;
-    margin-bottom: 20px;
-    font-size: 18px;
-    font-weight: 700;
-  }
-  .match-banner.full { background: var(--green-bg); border: 2px solid var(--green); color: var(--green); }
-  .match-banner.potential { background: var(--yellow-bg); border: 2px solid var(--yellow); color: var(--yellow); }
-  .match-banner.mismatch { background: var(--red-bg); border: 2px solid var(--red); color: var(--red); }
-  .match-banner.unmatchable { background: var(--red-bg); border: 2px solid var(--gray); color: var(--gray); }
-  .match-banner .sub { font-size: 14px; font-weight: 400; opacity: 0.8; margin-top: 4px; }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    background: var(--card);
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-  }
-  th {
-    background: rgba(255,255,255,0.05);
-    padding: 12px 14px;
-    text-align: left;
+  .input-group label {
     font-size: 12px;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
   }
-  td {
-    padding: 12px 14px;
-    font-size: 13px;
-    border-bottom: 1px solid var(--border);
-    font-family: 'SF Mono', 'Consolas', monospace;
-  }
-  tr:last-child td { border-bottom: none; }
-
-  .grade-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 700;
-    text-align: center;
-    min-width: 28px;
-  }
-  .grade-A { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
-  .grade-P { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow); }
-  .grade-M { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
-  .grade-? { background: transparent; color: var(--gray); border: 1px solid var(--gray); }
-
-  .haplotype-panel {
-    margin-top: 20px;
-    background: var(--card);
+  .input-group input {
+    font-family: var(--font);
+    font-size: 14px;
+    padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
+    border-radius: 6px;
+    background: var(--white);
+    color: var(--text);
+    transition: border-color 0.15s, box-shadow 0.15s;
+    outline: none;
+  }
+  .input-group input:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.12);
+  }
+  .input-group input::placeholder {
+    color: var(--text-faint);
     font-size: 13px;
   }
-  .haplotype-panel h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; }
-  .hap-entry { margin-bottom: 6px; font-family: 'SF Mono', 'Consolas', monospace; word-break: break-all; line-height: 1.5; }
-  .hap-entry .post { color: var(--accent); font-weight: 600; }
 
-  .footer { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); }
+  /* ── Button ─────────────────────────────────────────────── */
+
+  .btn-row {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+  }
+  .btn {
+    font-family: var(--font);
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 40px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary {
+    background: var(--blue);
+    color: var(--white);
+  }
+  .btn-primary:hover { background: var(--blue-hover); }
+  .btn-primary:disabled {
+    background: #a0c4e8;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* ── Results Table ──────────────────────────────────────── */
+
+  .results-area {
+    display: none;
+    animation: fadeIn 0.25s ease;
+  }
+  .results-area.visible { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .summary-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--bg);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .summary-bar strong { color: var(--text); font-weight: 600; }
+
+  .table-wrap {
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    background: var(--bg);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    text-align: right;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th:first-child { text-align: center; }
+  thead th:nth-child(2),
+  thead th:nth-child(3) { text-align: left; }
+
+  tbody td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody td:first-child { text-align: center; color: var(--text-faint); font-weight: 600; }
+  tbody td:nth-child(2),
+  tbody td:nth-child(3) { text-align: left; font-size: 12px; color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+
+  tbody tr:nth-child(even) { background: var(--row-even); }
+  tbody tr:hover { background: var(--blue-light); }
+
+  .freq-zero  { color: var(--text-faint); }
+  .freq-low   { color: #b91c1c; }
+  .freq-mid   { color: var(--amber); }
+  .freq-high  { color: var(--green); }
+  .freq-top   { color: var(--blue); font-weight: 600; }
+
+  /* ── Error ──────────────────────────────────────────────── */
+
+  .error-banner {
+    display: none;
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    color: var(--red);
+    font-size: 13px;
+  }
+  .error-banner.visible { display: block; }
+
+  /* ── Loading spinner ────────────────────────────────────── */
+
+  .spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2.5px solid rgba(255,255,255,0.35);
+    border-top-color: var(--white);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Responsive ─────────────────────────────────────────── */
+
+  @media (max-width: 640px) {
+    body { padding: 20px 12px 60px; }
+    .card { padding: 20px; }
+    .input-grid { grid-template-columns: 1fr; }
+    table { font-size: 12px; }
+    thead th, tbody td { padding: 8px 6px; }
+  }
 </style>
 </head>
 <body>
 
+<!-- ── Header ─────────────────────────────────────────────── -->
+
 <div class="header">
-  <h1>🧬 Haplo<span>Stats</span></h1>
-  <p>Clinical HLA Match Dashboard — Donor-Recipient Imputation &amp; Grading</p>
-  <div class="version" id="versionInfo">Connecting...</div>
+  <h1>HaploStats <span>Population Explorer</span></h1>
+  <p>Multi-population diplotype frequency lookup (2pq / p²)</p>
+  <div class="version">v0.2.0</div>
 </div>
 
-<div class="panels">
-  <div class="panel patient">
-    <h2>🩺 Patient Genotype</h2>
-    <div id="patientInputs"></div>
+<!-- ── Input Card ──────────────────────────────────────────── -->
+
+<div class="card">
+  <div class="card-title">Patient HLA Genotype <small>— enter unphased alleles (comma separated)</small></div>
+
+  <div class="input-grid">
+    <div class="input-group">
+      <label for="hla_a">HLA-A</label>
+      <input type="text" id="hla_a" placeholder="e.g. 01:01, 03:01" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label for="hla_c">HLA-C</label>
+      <input type="text" id="hla_c" placeholder="e.g. 07:01, 07:02" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label for="hla_b">HLA-B</label>
+      <input type="text" id="hla_b" placeholder="e.g. 08:01, 44:02" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label for="hla_drb1">HLA-DRB1</label>
+      <input type="text" id="hla_drb1" placeholder="e.g. 03:01, 04:01" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label for="hla_dqb1">HLA-DQB1</label>
+      <input type="text" id="hla_dqb1" placeholder="e.g. 02:01, 03:02" autocomplete="off">
+    </div>
   </div>
-  <div class="panel donor">
-    <h2>🩸 Donor Genotype</h2>
-    <div id="donorInputs"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" id="calcBtn" onclick="calculate()">Calculate Haplotype Frequencies</button>
+  </div>
+
+  <div class="error-banner" id="errorBanner"></div>
+</div>
+
+<!-- ── Results Card ────────────────────────────────────────── -->
+
+<div class="card results-area" id="resultsArea">
+  <div class="card-title">Imputation Results</div>
+
+  <div class="summary-bar" id="summaryBar">
+    <span id="summaryText">—</span>
+    <span id="entropyText"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Haplotype 1</th>
+          <th>Haplotype 2</th>
+          <th>Global</th>
+          <th>AFA</th>
+          <th>API</th>
+          <th>CAU</th>
+          <th>HIS</th>
+          <th>NAM</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
   </div>
 </div>
 
-<div class="controls">
-  <select id="gradesSelect">
-    <option value="core">Core (A · C · B · DRB1 · DQB1)</option>
-    <option value="extended" selected>Extended (+ DPB1)</option>
-    <option value="full">Full (all 9 loci)</option>
-  </select>
-  <button class="btn-compare" id="compareBtn" onclick="compare()">Compare Donors</button>
-</div>
-
-<div class="status" id="status">Enter HLA alleles and click Compare.</div>
-
-<div class="results" id="results">
-  <div id="matchBanner"></div>
-  <table>
-    <thead><tr><th>Locus</th><th>Grade</th><th>Patient Alleles</th><th>Donor Alleles</th><th>Explanation</th></tr></thead>
-    <tbody id="resultsBody"></tbody>
-  </table>
-  <div class="haplotype-panel">
-    <h3>🧬 Patient Imputed Haplotypes</h3>
-    <div id="patientHaplotypes"></div>
-  </div>
-  <div class="haplotype-panel">
-    <h3>🧬 Donor Imputed Haplotypes</h3>
-    <div id="donorHaplotypes"></div>
-  </div>
-</div>
-
-<div class="footer">HaploStats v0.1.0 · Population Frequency Reference · 577 Haplotypes</div>
+<!-- ── Script ──────────────────────────────────────────────── -->
 
 <script>
-const LOCI = ['hla_a','hla_c','hla_b','hla_drb345','hla_drb1','hla_dqa1','hla_dqb1','hla_dpa1','hla_dpb1'];
-const LABELS = {
-  hla_a:'HLA-A', hla_c:'HLA-C', hla_b:'HLA-B',
-  hla_drb345:'DRB345', hla_drb1:'DRB1',
-  hla_dqa1:'DQA1', hla_dqb1:'DQB1',
-  hla_dpa1:'DPA1', hla_dpb1:'DPB1',
-};
-const PLACEHOLDERS = {
-  hla_a:'A*01:01 / A*03:01',
-  hla_c:'C*07:01 / C*07:02',
-  hla_b:'B*08:01 / B*07:02',
-  hla_drb345:'DRB3*01:01 / DRB5*01:01',
-  hla_drb1:'DRB1*03:01 / DRB1*15:01',
-  hla_dqa1:'DQA1*05:01 / DQA1*01:02',
-  hla_dqb1:'DQB1*02:01 / DQB1*06:02',
-  hla_dpa1:'DPA1*01:03 / DPA1*02:01',
-  hla_dpb1:'DPB1*04:01 / DPB1*02:01',
-};
+// ── Frequency formatting ────────────────────────────────────
 
-function buildInputs(containerId, prefix) {
-  const c = document.getElementById(containerId);
-  LOCI.forEach(loc => {
-    const row = document.createElement('div');
-    row.className = 'locus-row';
-    row.innerHTML = `<label>${LABELS[loc]}</label>
-      <input type="text" id="${prefix}_${loc}" placeholder="${PLACEHOLDERS[loc]}" autocomplete="off">`;
-    c.appendChild(row);
-  });
+function fmtFreq(val) {
+  if (val === 0 || val === 0.0) return '<span class="freq-zero">—</span>';
+  if (val >= 0.01) {
+    const pct = (val * 100).toFixed(2);
+    return `<span class="freq-top">${pct}%</span>`;
+  }
+  if (val >= 0.001) {
+    const pct = (val * 100).toFixed(3);
+    return `<span class="freq-high">${pct}%</span>`;
+  }
+  if (val >= 1e-5) {
+    return `<span class="freq-mid">${val.toExponential(2)}</span>`;
+  }
+  return `<span class="freq-low">${val.toExponential(2)}</span>`;
 }
 
-function parseAlleles(val) {
-  if (!val || !val.trim()) return null;
-  return val.split('/').map(s => s.trim()).filter(s => s.length > 0);
+// ── Color-code posterior probability ────────────────────────
+
+function fmtPosterior(val) {
+  if (val >= 0.5) return `<span class="freq-top">${(val * 100).toFixed(1)}%</span>`;
+  if (val >= 0.1) return `<span class="freq-high">${(val * 100).toFixed(1)}%</span>`;
+  return `<span class="freq-mid">${(val * 100).toFixed(1)}%</span>`;
 }
 
-function buildPayload(prefix) {
-  const p = {};
-  LOCI.forEach(loc => {
-    const input = document.getElementById(`${prefix}_${loc}`);
-    const alleles = parseAlleles(input.value);
-    p[loc] = alleles;
-  });
-  return p;
+// ── Main calculation ────────────────────────────────────────
+
+function parseAlleles(id) {
+  const raw = document.getElementById(id).value.trim();
+  if (!raw) return null;
+  return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
 }
 
-async function compare() {
-  const btn = document.getElementById('compareBtn');
-  const status = document.getElementById('status');
+async function calculate() {
+  const btn = document.getElementById('calcBtn');
+  const banner = document.getElementById('errorBanner');
+  const resultsArea = document.getElementById('resultsArea');
+  const tbody = document.getElementById('resultsBody');
+  const summaryText = document.getElementById('summaryText');
+  const entropyText = document.getElementById('entropyText');
+
+  // Hide previous results / errors
+  resultsArea.classList.remove('visible');
+  banner.classList.remove('visible');
+  banner.textContent = '';
+
+  // Parse inputs
+  const payload = {};
+  const fields = ['hla_a', 'hla_c', 'hla_b', 'hla_drb1', 'hla_dqb1'];
+  let hasData = false;
+
+  for (const field of fields) {
+    const alleles = parseAlleles(field);
+    if (alleles && alleles.length >= 1) {
+      // Normalise: prefix with "XX:XX:XX:XX"-style fields only — pass through as-is
+      payload[field] = alleles;
+      hasData = true;
+    }
+  }
+
+  if (!hasData) {
+    banner.textContent = 'Please enter at least one HLA locus with typed alleles.';
+    banner.classList.add('visible');
+    return;
+  }
+
+  // Button loading state
+  const originalText = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span>Calculating…';
   btn.disabled = true;
-  status.textContent = '⏳ Imputing and comparing...';
-
-  const payload = {
-    patient: buildPayload('p'),
-    donor: buildPayload('d'),
-    population: 'Global',
-    grades: document.getElementById('gradesSelect').value,
-  };
 
   try {
-    const resp = await fetch('/compare', {
+    const response = await fetch('/impute', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await resp.json();
 
-    if (data.status !== 'success') {
-      status.textContent = '❌ ' + (data.detail || 'API error');
-      btn.disabled = false;
-      return;
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.detail || `Server error ${response.status}`);
     }
 
-    displayResults(data);
-    status.textContent = '✅ Comparison complete.';
-  } catch (e) {
-    status.textContent = '❌ Network error: ' + e.message;
+    const data = await response.json();
+
+    // Summary bar
+    const popUsed = data.population || 'Global';
+    const totalPairs = data.total_possible_pairs || 0;
+    const entropy = data.entropy !== undefined && data.entropy !== null
+                    ? `Shannon entropy: <strong>${data.entropy.toFixed(2)}</strong> bits`
+                    : '';
+    summaryText.innerHTML = `<strong>${totalPairs}</strong> possible pairs · Ranking by <strong>${popUsed}</strong> posterior`;
+    entropyText.innerHTML = entropy;
+
+    // Build table rows
+    const pairs = data.imputed_pairs || [];
+    if (pairs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--text-faint);">No matching haplotype pairs found.</td></tr>';
+    } else {
+      let html = '';
+      for (const pair of pairs) {
+        const pf = pair.population_frequencies || {};
+        html += `<tr>
+          <td>${pair.rank}</td>
+          <td title="${escapeHtml(pair.haplotype_1)}">${escapeHtml(trunc(pair.haplotype_1, 55))}</td>
+          <td title="${escapeHtml(pair.haplotype_2)}">${escapeHtml(trunc(pair.haplotype_2, 55))}</td>
+          <td>${fmtFreq(pf.Global)}</td>
+          <td>${fmtFreq(pf.AFA)}</td>
+          <td>${fmtFreq(pf.API)}</td>
+          <td>${fmtFreq(pf.CAU)}</td>
+          <td>${fmtFreq(pf.HIS)}</td>
+          <td>${fmtFreq(pf.NAM)}</td>
+        </tr>`;
+      }
+      tbody.innerHTML = html;
+    }
+
+    // Show results
+    resultsArea.classList.add('visible');
+    resultsArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  } catch (err) {
+    banner.textContent = err.message || 'An unexpected error occurred.';
+    banner.classList.add('visible');
+  } finally {
+    btn.innerHTML = originalText;
+    btn.disabled = false;
   }
-  btn.disabled = false;
 }
 
-function displayResults(data) {
-  const results = document.getElementById('results');
-  results.classList.add('visible');
+// ── Helpers ──────────────────────────────────────────────────
 
-  const banner = document.getElementById('matchBanner');
-  const compat = data.match_overall.compatibility;
-  const grade = data.match_overall.overall_grade;
+function trunc(str, maxLen) {
+  if (!str || str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + '…';
+}
 
-  let bannerClass = 'match-banner ';
-  if (compat === 'FULL MATCH') bannerClass += 'full';
-  else if (compat === 'POTENTIAL MATCH') bannerClass += 'potential';
-  else if (compat === 'MISMATCH') bannerClass += 'mismatch';
-  else bannerClass += 'unmatchable';
+function escapeHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
-  banner.className = bannerClass;
-  banner.innerHTML = `<div>${grade}</div><div class="sub">${compat}</div>`;
+// ── Allow Enter key to submit ───────────────────────────────
 
-  const tbody = document.getElementById('resultsBody');
-  tbody.innerHTML = '';
-
-  const sortedLoci = ['HLA-A','HLA-C','HLA-B','DRB345','DRB1','DQA1','DQB1','DPA1','DPB1'];
-  sortedLoci.forEach(label => {
-    const lg = data.locus_grades[label];
-    if (!lg) return;
-    const tr = document.createElement('tr');
-    const gradeClass = `grade-${lg.grade}`;
-    const gradeLabel = {
-      'A': 'Allele Match',
-      'P': 'Potential',
-      'M': 'Mismatch',
-      '?': 'Unknown',
-    }[lg.grade] || lg.grade;
-    tr.innerHTML = `
-      <td><strong>${label}</strong></td>
-      <td><span class="grade-badge ${gradeClass}">${lg.grade}</span> ${gradeLabel}</td>
-      <td>${lg.patient_alleles.join(' / ') || '—'}</td>
-      <td>${lg.donor_alleles.join(' / ') || '—'}</td>
-      <td style="font-family:inherit;color:var(--text-dim);font-size:12px">${lg.explanation || ''}</td>`;
-    tbody.appendChild(tr);
-  });
-
-  // Haplotypes
-  function showHaps(containerId, pairs, label) {
-    const c = document.getElementById(containerId);
-    c.innerHTML = '';
-    if (!pairs || pairs.length === 0) {
-      c.innerHTML = '<div class="hap-entry" style="color:var(--gray)">No haplotypes imputed.</div>';
-      return;
-    }
-    pairs.forEach((p, i) => {
-      const post = (p.posterior * 100).toFixed(1);
-      const h1short = p.haplotype_1 ? p.haplotype_1.split('|').slice(0,3).join('|') + '|...' : '?';
-      const h2short = p.haplotype_2 ? p.haplotype_2.split('|').slice(0,3).join('|') + '|...' : '?';
-      const div = document.createElement('div');
-      div.className = 'hap-entry';
-      div.innerHTML = `<strong>#${p.rank}</strong> <span class="post">${post}%</span>
-        <br>H1: ${h1short}<br>H2: ${h2short}`;
-      c.appendChild(div);
+document.addEventListener('DOMContentLoaded', () => {
+  const inputs = document.querySelectorAll('.input-group input');
+  for (const input of inputs) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') calculate();
     });
   }
-  showHaps('patientHaplotypes', data.patient_pairs, 'Patient');
-  showHaps('donorHaplotypes', data.donor_pairs, 'Donor');
-}
-
-// Initialise
-document.addEventListener('DOMContentLoaded', () => {
-  buildInputs('patientInputs', 'p');
-  buildInputs('donorInputs', 'd');
-
-  // Set example data
-  const eg = {
-    p_hla_a: 'A*01:01:01:01 / A*03:01:01:01',
-    p_hla_c: 'C*07:01:01:01 / C*07:02:01:03',
-    p_hla_b: 'B*08:01:01:01 / B*07:02:01',
-    p_hla_drb345: 'DRB3*01:01:02:01 / DRB5*01:01:01',
-    p_hla_drb1: 'DRB1*03:01:01:01SG / DRB1*15:01:01:01SG',
-    p_hla_dqa1: 'DQA1*05:01:01:02 / DQA1*01:02:01:01SG',
-    p_hla_dqb1: 'DQB1*02:01:01 / DQB1*06:02:01',
-    p_hla_dpa1: 'DPA1*01:03:01:02 / DPA1*01:03:01:02',
-    p_hla_dpb1: 'DPB1*04:01:01:01 / DPB1*04:01:01:02',
-    d_hla_a: 'A*01:01:01:01 / A*02:01:01:01',
-    d_hla_c: 'C*07:01:01:01 / C*05:01:01:02',
-    d_hla_b: 'B*08:01:01:01 / B*44:02:01:01',
-    d_hla_drb345: 'DRB3*01:01:02:01 / DRB4*01:03:01:01',
-    d_hla_drb1: 'DRB1*03:01:01:01SG / DRB1*04:01:01:01SG',
-    d_hla_dqa1: 'DQA1*05:01:01:02 / DQA1*03:03:01:01',
-    d_hla_dqb1: 'DQB1*02:01:01 / DQB1*03:01:01:01',
-    d_hla_dpa1: 'DPA1*01:03:01:02 / DPA1*01:03:01:04',
-    d_hla_dpb1: 'DPB1*04:01:01:01 / DPB1*04:01:01:02',
-  };
-  Object.keys(eg).forEach(k => {
-    const el = document.getElementById(k);
-    if (el) el.value = eg[k];
-  });
-
-  // Check API health
-  fetch('/health').then(r=>r.json()).then(d => {
-    document.getElementById('versionInfo').textContent =
-      `✅ Engine v${d.version} · ${d.haplotypes_in_reference} haplotypes loaded`;
-  }).catch(() => {
-    document.getElementById('versionInfo').textContent = '❌ Cannot reach API';
-  });
 });
 </script>
+
 </body>
 </html>

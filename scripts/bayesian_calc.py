@@ -37,6 +37,7 @@ POPULATION_COLUMNS = {
     'API':      'API_freq',        # Asian / Pacific Islander
     'CAU':      'EuAm_freq',       # European American (Caucasian)
     'HIS':      'USA_Hispanic_freq',  # US Hispanic
+    'NAM':      None,              # Native American — not in current reference
     'European': 'European_freq',
     'Spanish':  'Spanish_freq',
     'Mexican':  'Mexican_freq',
@@ -44,7 +45,7 @@ POPULATION_COLUMNS = {
 }
 
 # Shorthand list for iteration and serialisation order
-POPULATION_ORDER = ['Global', 'AFA', 'API', 'CAU', 'HIS',
+POPULATION_ORDER = ['Global', 'AFA', 'API', 'CAU', 'HIS', 'NAM',
                     'European', 'Spanish', 'Mexican', 'Arab']
 
 
@@ -181,7 +182,7 @@ class HaploMath:
         cur = self.conn.cursor()
 
         # Build column list: loci + ALL frequency columns
-        freq_cols = [info[1] for info in POPULATION_COLUMNS.values()]
+        freq_cols = [col for col in POPULATION_COLUMNS.values() if col is not None]
         all_cols = ', '.join(self.LOCI + freq_cols)
 
         rows = cur.execute(
@@ -277,13 +278,18 @@ class HaploMath:
                 pop_freqs = {}
 
                 for pop_name, col_name in POPULATION_COLUMNS.items():
-                    f1 = h1.get(col_name) or 0.0
-                    f2 = h2.get(col_name) or 0.0
-                    freq = _diplotype_frequency(f1, f2, is_homozygous)
-                    pop_freqs[pop_name] = round(freq, 8)
+                    if col_name is None:
+                        pop_freqs[pop_name] = 0.0
+                    else:
+                        f1 = h1.get(col_name) or 0.0
+                        f2 = h2.get(col_name) or 0.0
+                        freq = _diplotype_frequency(f1, f2, is_homozygous)
+                        pop_freqs[pop_name] = round(freq, 8)
 
                 # Use the primary population (self.population) for ranking
-                primary_col = POPULATION_COLUMNS.get(self.population, 'Global_freq')
+                # Fall back to Global if selected population has no column
+                raw_col = POPULATION_COLUMNS.get(self.population)
+                primary_col = raw_col if raw_col else 'Global_freq'
                 f1_primary = h1.get(primary_col) or 0.0
                 f2_primary = h2.get(primary_col) or 0.0
                 primary_joint = _diplotype_frequency(f1_primary, f2_primary, is_homozygous)

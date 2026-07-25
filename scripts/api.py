@@ -126,6 +126,7 @@ class PopulationFrequencies(BaseModel):
     API: float = 0.0
     CAU: float = 0.0
     HIS: float = 0.0
+    NAM: float = 0.0
     European: float = 0.0
     Spanish: float = 0.0
     Mexican: float = 0.0
