@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HaploStats — Clinical HLA Match Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1923;
+    --card: #1a2d3d;
+    --border: #2a4a5e;
+    --text: #d4e6f0;
+    --text-dim: #7a9db5;
+    --green: #00c853;
+    --green-bg: #00c85322;
+    --yellow: #ffa000;
+    --yellow-bg: #ffa00022;
+    --red: #ff1744;
+    --red-bg: #ff174422;
+    --gray: #546e7a;
+    --accent: #2979ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    min-height: 100vh;
+  }
+  .header {
+    text-align: center;
+    padding: 20px 0 30px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 30px;
+  }
+  .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .header h1 span { color: var(--accent); }
+  .header p { color: var(--text-dim); margin-top: 6px; font-size: 14px; }
+  .header .version { color: var(--text-dim); font-size: 12px; margin-top: 4px; }
+
+  .panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    max-width: 1400px;
+    margin: 0 auto 30px;
+  }
+  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel.patient h2 { color: var(--accent); }
+  .panel.donor h2 { color: #ff6d00; }
+
+  .locus-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .locus-row label {
+    width: 80px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .locus-row input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .locus-row input:focus { border-color: var(--accent); }
+  .locus-row input::placeholder { color: var(--gray); font-size: 11px; }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    align-items: center;
+    max-width: 1400px;
+    margin: 0 auto 30px;
+    flex-wrap: wrap;
+  }
+  .controls select {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    cursor: pointer;
+  }
+  .btn-compare {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 36px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+  .btn-compare:hover { opacity: 0.9; }
+  .btn-compare:active { transform: scale(0.97); }
+  .btn-compare:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .status { text-align: center; color: var(--text-dim); font-size: 14px; margin-bottom: 16px; max-width: 1400px; margin: 0 auto 20px; }
+
+  .results {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: none;
+  }
+  .results.visible { display: block; }
+
+  .match-banner {
+    text-align: center;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .match-banner.full { background: var(--green-bg); border: 2px solid var(--green); color: var(--green); }
+  .match-banner.potential { background: var(--yellow-bg); border: 2px solid var(--yellow); color: var(--yellow); }
+  .match-banner.mismatch { background: var(--red-bg); border: 2px solid var(--red); color: var(--red); }
+  .match-banner.unmatchable { background: var(--red-bg); border: 2px solid var(--gray); color: var(--gray); }
+  .match-banner .sub { font-size: 14px; font-weight: 400; opacity: 0.8; margin-top: 4px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  th {
+    background: rgba(255,255,255,0.05);
+    padding: 12px 14px;
+    text-align: left;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 12px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'SF Mono', 'Consolas', monospace;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  .grade-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+    min-width: 28px;
+  }
+  .grade-A { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
+  .grade-P { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow); }
+  .grade-M { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+  .grade-? { background: transparent; color: var(--gray); border: 1px solid var(--gray); }
+
+  .haplotype-panel {
+    margin-top: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 13px;
+  }
+  .haplotype-panel h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; }
+  .hap-entry { margin-bottom: 6px; font-family: 'SF Mono', 'Consolas', monospace; word-break: break-all; line-height: 1.5; }
+  .hap-entry .post { color: var(--accent); font-weight: 600; }
+
+  .footer { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🧬 Haplo<span>Stats</span></h1>
+  <p>Clinical HLA Match Dashboard — Donor-Recipient Imputation &amp; Grading</p>
+  <div class="version" id="versionInfo">Connecting...</div>
+</div>
+
+<div class="panels">
+  <div class="panel patient">
+    <h2>🩺 Patient Genotype</h2>
+    <div id="patientInputs"></div>
+  </div>
+  <div class="panel donor">
+    <h2>🩸 Donor Genotype</h2>
+    <div id="donorInputs"></div>
+  </div>
+</div>
+
+<div class="controls">
+  <select id="gradesSelect">
+    <option value="core">Core (A · C · B · DRB1 · DQB1)</option>
+    <option value="extended" selected>Extended (+ DPB1)</option>
+    <option value="full">Full (all 9 loci)</option>
+  </select>
+  <button class="btn-compare" id="compareBtn" onclick="compare()">Compare Donors</button>
+</div>
+
+<div class="status" id="status">Enter HLA alleles and click Compare.</div>
+
+<div class="results" id="results">
+  <div id="matchBanner"></div>
+  <table>
+    <thead><tr><th>Locus</th><th>Grade</th><th>Patient Alleles</th><th>Donor Alleles</th><th>Explanation</th></tr></thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+  <div class="haplotype-panel">
+    <h3>🧬 Patient Imputed Haplotypes</h3>
+    <div id="patientHaplotypes"></div>
+  </div>
+  <div class="haplotype-panel">
+    <h3>🧬 Donor Imputed Haplotypes</h3>
+    <div id="donorHaplotypes"></div>
+  </div>
+</div>
+
+<div class="footer">HaploStats v0.1.0 · Population Frequency Reference · 577 Haplotypes</div>
+
+<script>
+const LOCI = ['hla_a','hla_c','hla_b','hla_drb345','hla_drb1','hla_dqa1','hla_dqb1','hla_dpa1','hla_dpb1'];
+const LABELS = {
+  hla_a:'HLA-A', hla_c:'HLA-C', hla_b:'HLA-B',
+  hla_drb345:'DRB345', hla_drb1:'DRB1',
+  hla_dqa1:'DQA1', hla_dqb1:'DQB1',
+  hla_dpa1:'DPA1', hla_dpb1:'DPB1',
+};
+const PLACEHOLDERS = {
+  hla_a:'A*01:01 / A*03:01',
+  hla_c:'C*07:01 / C*07:02',
+  hla_b:'B*08:01 / B*07:02',
+  hla_drb345:'DRB3*01:01 / DRB5*01:01',
+  hla_drb1:'DRB1*03:01 / DRB1*15:01',
+  hla_dqa1:'DQA1*05:01 / DQA1*01:02',
+  hla_dqb1:'DQB1*02:01 / DQB1*06:02',
+  hla_dpa1:'DPA1*01:03 / DPA1*02:01',
+  hla_dpb1:'DPB1*04:01 / DPB1*02:01',
+};
+
+function buildInputs(containerId, prefix) {
+  const c = document.getElementById(containerId);
+  LOCI.forEach(loc => {
+    const row = document.createElement('div');
+    row.className = 'locus-row';
+    row.innerHTML = `<label>${LABELS[loc]}</label>
+      <input type="text" id="${prefix}_${loc}" placeholder="${PLACEHOLDERS[loc]}" autocomplete="off">`;
+    c.appendChild(row);
+  });
+}
+
+function parseAlleles(val) {
+  if (!val || !val.trim()) return null;
+  return val.split('/').map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function buildPayload(prefix) {
+  const p = {};
+  LOCI.forEach(loc => {
+    const input = document.getElementById(`${prefix}_${loc}`);
+    const alleles = parseAlleles(input.value);
+    p[loc] = alleles;
+  });
+  return p;
+}
+
+async function compare() {
+  const btn = document.getElementById('compareBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.textContent = '⏳ Imputing and comparing...';
+
+  const payload = {
+    patient: buildPayload('p'),
+    donor: buildPayload('d'),
+    population: 'Global',
+    grades: document.getElementById('gradesSelect').value,
+  };
+
+  try {
+    const resp = await fetch('/compare', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+
+    if (data.status !== 'success') {
+      status.textContent = '❌ ' + (data.detail || 'API error');
+      btn.disabled = false;
+      return;
+    }
+
+    displayResults(data);
+    status.textContent = '✅ Comparison complete.';
+  } catch (e) {
+    status.textContent = '❌ Network error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+function displayResults(data) {
+  const results = document.getElementById('results');
+  results.classList.add('visible');
+
+  const banner = document.getElementById('matchBanner');
+  const compat = data.match_overall.compatibility;
+  const grade = data.match_overall.overall_grade;
+
+  let bannerClass = 'match-banner ';
+  if (compat === 'FULL MATCH') bannerClass += 'full';
+  else if (compat === 'POTENTIAL MATCH') bannerClass += 'potential';
+  else if (compat === 'MISMATCH') bannerClass += 'mismatch';
+  else bannerClass += 'unmatchable';
+
+  banner.className = bannerClass;
+  banner.innerHTML = `<div>${grade}</div><div class="sub">${compat}</div>`;
+
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = '';
+
+  const sortedLoci = ['HLA-A','HLA-C','HLA-B','DRB345','DRB1','DQA1','DQB1','DPA1','DPB1'];
+  sortedLoci.forEach(label => {
+    const lg = data.locus_grades[label];
+    if (!lg) return;
+    const tr = document.createElement('tr');
+    const gradeClass = `grade-${lg.grade}`;
+    const gradeLabel = {
+      'A': 'Allele Match',
+      'P': 'Potential',
+      'M': 'Mismatch',
+      '?': 'Unknown',
+    }[lg.grade] || lg.grade;
+    tr.innerHTML = `
+      <td><strong>${label}</strong></td>
+      <td><span class="grade-badge ${gradeClass}">${lg.grade}</span> ${gradeLabel}</td>
+      <td>${lg.patient_alleles.join(' / ') || '—'}</td>
+      <td>${lg.donor_alleles.join(' / ') || '—'}</td>
+      <td style="font-family:inherit;color:var(--text-dim);font-size:12px">${lg.explanation || ''}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Haplotypes
+  function showHaps(containerId, pairs, label) {
+    const c = document.getElementById(containerId);
+    c.innerHTML = '';
+    if (!pairs || pairs.length === 0) {
+      c.innerHTML = '<div class="hap-entry" style="color:var(--gray)">No haplotypes imputed.</div>';
+      return;
+    }
+    pairs.forEach((p, i) => {
+      const post = (p.posterior * 100).toFixed(1);
+      const h1short = p.haplotype_1 ? p.haplotype_1.split('|').slice(0,3).join('|') + '|...' : '?';
+      const h2short = p.haplotype_2 ? p.haplotype_2.split('|').slice(0,3).join('|') + '|...' : '?';
+      const div = document.createElement('div');
+      div.className = 'hap-entry';
+      div.innerHTML = `<strong>#${p.rank}</strong> <span class="post">${post}%</span>
+        <br>H1: ${h1short}<br>H2: ${h2short}`;
+      c.appendChild(div);
+    });
+  }
+  showHaps('patientHaplotypes', data.patient_pairs, 'Patient');
+  showHaps('donorHaplotypes', data.donor_pairs, 'Donor');
+}
+
+// Initialise
+document.addEventListener('DOMContentLoaded', () => {
+  buildInputs('patientInputs', 'p');
+  buildInputs('donorInputs', 'd');
+
+  // Set example data
+  const eg = {
+    p_hla_a: 'A*01:01:01:01 / A*03:01:01:01',
+    p_hla_c: 'C*07:01:01:01 / C*07:02:01:03',
+    p_hla_b: 'B*08:01:01:01 / B*07:02:01',
+    p_hla_drb345: 'DRB3*01:01:02:01 / DRB5*01:01:01',
+    p_hla_drb1: 'DRB1*03:01:01:01SG / DRB1*15:01:01:01SG',
+    p_hla_dqa1: 'DQA1*05:01:01:02 / DQA1*01:02:01:01SG',
+    p_hla_dqb1: 'DQB1*02:01:01 / DQB1*06:02:01',
+    p_hla_dpa1: 'DPA1*01:03:01:02 / DPA1*01:03:01:02',
+    p_hla_dpb1: 'DPB1*04:01:01:01 / DPB1*04:01:01:02',
+    d_hla_a: 'A*01:01:01:01 / A*02:01:01:01',
+    d_hla_c: 'C*07:01:01:01 / C*05:01:01:02',
+    d_hla_b: 'B*08:01:01:01 / B*44:02:01:01',
+    d_hla_drb345: 'DRB3*01:01:02:01 / DRB4*01:03:01:01',
+    d_hla_drb1: 'DRB1*03:01:01:01SG / DRB1*04:01:01:01SG',
+    d_hla_dqa1: 'DQA1*05:01:01:02 / DQA1*03:03:01:01',
+    d_hla_dqb1: 'DQB1*02:01:01 / DQB1*03:01:01:01',
+    d_hla_dpa1: 'DPA1*01:03:01:02 / DPA1*01:03:01:04',
+    d_hla_dpb1: 'DPB1*04:01:01:01 / DPB1*04:01:01:02',
+  };
+  Object.keys(eg).forEach(k => {
+    const el = document.getElementById(k);
+    if (el) el.value = eg[k];
+  });
+
+  // Check API health
+  fetch('/health').then(r=>r.json()).then(d => {
+    document.getElementById('versionInfo').textContent =
+      `✅ Engine v${d.version} · ${d.haplotypes_in_reference} haplotypes loaded`;
+  }).catch(() => {
+    document.getElementById('versionInfo').textContent = '❌ Cannot reach API';
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+========================================================================
+  HaploStats — Concordance Benchmark Report
+========================================================================
+
+  Patients processed:       1000
+  API success:              1000
+  API failed:               0
+  Full 9-locus concordant:  53 (5.3%)
+  Phase concordant:         29 (2.9%)
+  No match found:           18
+
+  Mean response time:       319.1 ms
+  Median posterior:         0.894737
+
+  ── Per-Locus Allele Concordance ──
+    A           full=93.28%  allele-wise=93.28%
+    C           full=98.17%  allele-wise=98.17%
+    B           full=98.07%  allele-wise=98.07%
+    DRB345      full=64.46%  allele-wise=64.46%
+    DRB1        full=99.49%  allele-wise=99.49%
+    DQA1        full=99.80%  allele-wise=99.80%
+    DQB1        full=98.07%  allele-wise=98.07%
+    DPA1        full=89.00%  allele-wise=89.00%
+    DPB1        full=9.98%  allele-wise=9.98%
+
+========================================================================

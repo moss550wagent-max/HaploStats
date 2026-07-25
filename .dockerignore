@@ -1,0 +1,24 @@
+# ── HaploStats .dockerignore ───────────────────────────────────────
+# Exclude local-only files from the Docker build context
+
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.tox/
+.mypy_cache/
+.pytest_cache/
+.DS_Store
+notebooks/
+data/raw/
+data/clean/benchmark_results*.csv
+data/clean/synthetic_truth_set.csv
+data/clean/ingestion_summary.txt
+data/results/

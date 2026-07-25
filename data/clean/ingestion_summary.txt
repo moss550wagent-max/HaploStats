@@ -1,0 +1,38 @@
+============================================================
+HaploStats — Ingestion Summary
+============================================================
+Data source: Table14_ACBDRB345DRB1DQDP_0221.xlsx
+Sheet: UPHD_9_loci
+
+--- Structural ---
+Total haplotypes ingested: 577
+Total database columns:    36
+SQLite database path:      /home/node/.openclaw/workspace/HaploStats/db/haplostats.db
+Clean CSV path:            /home/node/.openclaw/workspace/HaploStats/data/clean/haplotypes_clean.csv
+
+--- HLA Loci ---
+hla_a, hla_c, hla_b, hla_drb345, hla_drb1, hla_dqa1, hla_dqb1, hla_dpa1, hla_dpb1
+
+--- Populations ---
+DB field (prefix)  |  N (sample size)
+-------------------+---------------
+Global             | 6582
+EuAm               | 4384
+AfAm               | 756
+USA_Hispanic       | 96
+European           | 424
+Spanish            | 530
+Mexican            | 208
+API                | 80
+Arab               | 104
+
+--- Biological Rule Enforcement ---
+'Abs' entries preserved in hla_drb345: 107
+Ambiguous (/ ) alleles split into JSON: 478
+Per locus:
+  hla_drb345: 123
+  hla_dqb1: 7
+  hla_dpb1: 348
+
+--- Status ---
+✅ Ingestion complete. Database ready for query.
