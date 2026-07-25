@@ -129,6 +129,11 @@
     font-size: 13px;
   }
 
+  /* Make last lone item span full width on two-column grid */
+  .input-grid .input-group:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
   /* ── Button ─────────────────────────────────────────────── */
 
   .btn-row {
@@ -228,6 +233,20 @@
   .freq-high  { color: var(--green); }
   .freq-top   { color: var(--blue); font-weight: 600; }
 
+  /* ── Section divider ────────────────────────────────────── */
+
+  .locus-section {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--blue);
+    grid-column: 1 / -1;
+    padding: 6px 0 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+  }
+
   /* ── Error ──────────────────────────────────────────────── */
 
   .error-banner {
@@ -284,6 +303,9 @@
   <div class="card-title">Patient HLA Genotype <small>— enter unphased alleles (comma separated)</small></div>
 
   <div class="input-grid">
+
+    <div class="locus-section">Class I</div>
+
     <div class="input-group">
       <label for="hla_a">HLA-A</label>
       <input type="text" id="hla_a" placeholder="e.g. 01:01, 03:01" autocomplete="off">
@@ -296,14 +318,37 @@
       <label for="hla_b">HLA-B</label>
       <input type="text" id="hla_b" placeholder="e.g. 08:01, 44:02" autocomplete="off">
     </div>
+
+    <div class="locus-section">Class II — DR / DQ</div>
+
+    <div class="input-group">
+      <label for="hla_drb345">HLA-DRB3/4/5</label>
+      <input type="text" id="hla_drb345" placeholder="e.g. DRB3*01:01, DRB5*01:01" autocomplete="off">
+    </div>
     <div class="input-group">
       <label for="hla_drb1">HLA-DRB1</label>
       <input type="text" id="hla_drb1" placeholder="e.g. 03:01, 04:01" autocomplete="off">
     </div>
     <div class="input-group">
+      <label for="hla_dqa1">HLA-DQA1</label>
+      <input type="text" id="hla_dqa1" placeholder="e.g. 05:01, 01:02" autocomplete="off">
+    </div>
+    <div class="input-group">
       <label for="hla_dqb1">HLA-DQB1</label>
       <input type="text" id="hla_dqb1" placeholder="e.g. 02:01, 03:02" autocomplete="off">
     </div>
+
+    <div class="locus-section">Class II — DP</div>
+
+    <div class="input-group">
+      <label for="hla_dpa1">HLA-DPA1</label>
+      <input type="text" id="hla_dpa1" placeholder="e.g. 01:03, 02:01" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label for="hla_dpb1">HLA-DPB1</label>
+      <input type="text" id="hla_dpb1" placeholder="e.g. 04:01, 02:01" autocomplete="off">
+    </div>
+
   </div>
 
   <div class="btn-row">
@@ -364,18 +409,12 @@ function fmtFreq(val) {
   return `<span class="freq-low">${val.toExponential(2)}</span>`;
 }
 
-// ── Color-code posterior probability ────────────────────────
-
-function fmtPosterior(val) {
-  if (val >= 0.5) return `<span class="freq-top">${(val * 100).toFixed(1)}%</span>`;
-  if (val >= 0.1) return `<span class="freq-high">${(val * 100).toFixed(1)}%</span>`;
-  return `<span class="freq-mid">${(val * 100).toFixed(1)}%</span>`;
-}
-
 // ── Main calculation ────────────────────────────────────────
 
 function parseAlleles(id) {
-  const raw = document.getElementById(id).value.trim();
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const raw = el.value.trim();
   if (!raw) return null;
   return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
 }
@@ -393,15 +432,20 @@ async function calculate() {
   banner.classList.remove('visible');
   banner.textContent = '';
 
+  // All 9 HLA loci the engine supports
+  const fields = [
+    'hla_a', 'hla_c', 'hla_b',
+    'hla_drb345', 'hla_drb1', 'hla_dqa1', 'hla_dqb1',
+    'hla_dpa1', 'hla_dpb1',
+  ];
+
   // Parse inputs
   const payload = {};
-  const fields = ['hla_a', 'hla_c', 'hla_b', 'hla_drb1', 'hla_dqb1'];
   let hasData = false;
 
   for (const field of fields) {
     const alleles = parseAlleles(field);
     if (alleles && alleles.length >= 1) {
-      // Normalise: prefix with "XX:XX:XX:XX"-style fields only — pass through as-is
       payload[field] = alleles;
       hasData = true;
     }
