@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+
+# Local dev
+run_windows.bat
+notebooks/
+data/raw/
+data/results/
+data/clean/benchmark_results_*.csv
+data/clean/synthetic_truth_set.csv
+data/clean/ingestion_summary.txt
