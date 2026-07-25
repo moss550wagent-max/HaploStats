@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-HaploStats — FastAPI Web Service
-Phase 5: Clinical-grade API for haplotype imputation queries.
+HaploStats — FastAPI Web Service (Population Explorer)
+Phase 11+: Population-aware REST API returning multi-population
+diplotype frequencies (2pq / p²) for every imputed haplotype pair.
 
 Endpoints:
   POST /impute  — submit unphased patient genotype → ranked phased haplotypes
+                   with per-population diplotype frequencies (AFA, API, CAU,
+                   HIS, Global, and more)
   GET  /health  — service health check
+  GET  /        — population explorer web dashboard
 """
 
 import sys
@@ -25,16 +29,16 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 
-from scripts.dp_imputation import HaploEM, ALL_LOCI, LOCUS_LABEL
-from scripts.match_grader import MatchGrader, CORE_MATCH_LOCL, EXTENDED_MATCH_LOCL, FULL_MATCH_LOCL
+from scripts.bayesian_calc import HaploMath, POPULATION_ORDER
 
 # ── App Initialisation ─────────────────────────────────────────────
 
 app = FastAPI(
-    title="HaploStats — HLA Haplotype Imputation Engine",
-    description="Clinical-grade Bayesian/EM engine for resolving unphased "
-                "HLA genotypes into phased high-resolution haplotype pairs.",
-    version="0.1.0",
+    title="HaploStats — HLA Haplotype Population Explorer",
+    description="Clinical-grade Bayesian haplotype imputation engine "
+                "returning per-population diplotype frequencies (2pq / p²) "
+                "for all reference populations (AFA, API, CAU, HIS, Global).",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -52,20 +56,38 @@ if STATIC_DIR.exists():
 
 @app.get("/")
 def serve_dashboard():
-    """Serve the web dashboard at the root URL."""
+    """Serve the population explorer web dashboard at the root URL."""
     idx = STATIC_DIR / "index.html"
     if idx.exists():
         return FileResponse(str(idx))
-    return {"status": "ok", "message": "HaploStats API running. Dashboard static files not found."}
+    return {
+        "status": "ok",
+        "message": "HaploStats Population Explorer API running. "
+                   "Dashboard static files not found."
+    }
 
-# Global engine instance (lazy-init on first request)
-_engine: Optional[HaploEM] = None
+
+# ── Locus constants ────────────────────────────────────────────────
+
+LOCUS_LABEL = {
+    'hla_a': 'HLA-A', 'hla_c': 'HLA-C', 'hla_b': 'HLA-B',
+    'hla_drb345': 'HLA-DRB345', 'hla_drb1': 'HLA-DRB1',
+    'hla_dqa1': 'HLA-DQA1', 'hla_dqb1': 'HLA-DQB1',
+    'hla_dpa1': 'HLA-DPA1', 'hla_dpb1': 'HLA-DPB1',
+}
+
+ALL_LOCI = list(LOCUS_LABEL.keys())
 
 
-def get_engine(population: str = "Global") -> HaploEM:
+# ── Global engine instance (lazy-init on first request) ────────────
+
+_engine: Optional[HaploMath] = None
+
+
+def get_engine(population: str = "Global") -> HaploMath:
     global _engine
     if _engine is None:
-        _engine = HaploEM(population=population)
+        _engine = HaploMath(population=population)
         _engine.connect()
     return _engine
 
@@ -94,91 +116,58 @@ class ImputeRequest(BaseModel):
     hla_dpb1: Optional[list] = None
 
 
-class TopPair(BaseModel):
+class PopulationFrequencies(BaseModel):
+    """
+    Diplotype frequencies (Hardy-Weinberg 2pq / p²) across all
+    reference populations for a single haplotype pair.
+    """
+    Global: float = 0.0
+    AFA: float = 0.0
+    API: float = 0.0
+    CAU: float = 0.0
+    HIS: float = 0.0
+    European: float = 0.0
+    Spanish: float = 0.0
+    Mexican: float = 0.0
+    Arab: float = 0.0
+
+
+class ImputedPair(BaseModel):
+    """A single phased haplotype pair with all-population frequencies."""
     rank: int
     haplotype_1: str = ""
     haplotype_2: str = ""
     posterior: float = 0.0
     cumulative: float = 0.0
-    h1_frequency: float = 0.0
-    h2_frequency: float = 0.0
-
-
-class BlockInfo(BaseModel):
-    block: str
-    haplotypes: int = 0
-    pairs_before_em: int = 0
-    pairs_after_trim: int = 0
-    converged_iterations: int = 0
+    is_homozygous: bool = False
+    population_frequencies: PopulationFrequencies = PopulationFrequencies()
 
 
 class ImputeResponse(BaseModel):
-    """Top-level API response."""
+    """Top-level API response with multi-population frequency data."""
     status: str
     population: str
     patient_genotype: dict
     total_possible_pairs: int
     entropy: float
-    blocks: list[BlockInfo] = []
-    top_pairs: list[TopPair] = []
-
-
-class CompareRequest(BaseModel):
-    """Donor-recipient comparison request."""
-    patient: ImputeRequest
-    donor: ImputeRequest
-    population: str = "Global"
-    grades: str = "core"  # "core" (A,B,C,DRB1,DQB1), "extended" (+DPB1), "full" (all 9)
-
-
-class LocusGrade(BaseModel):
-    grade: str
-    patient_alleles: list = []
-    donor_alleles: list = []
-    patient_posterior: float = 0.0
-    explanation: str = ""
-
-
-class MatchOverall(BaseModel):
-    overall_grade: str
-    compatibility: str
-    total_loci_scored: int = 0
-    allele_matches: int = 0
-    potential_matches: int = 0
-    mismatches: int = 0
-
-
-class CompareResponse(BaseModel):
-    status: str
-    population: str
-    match_overall: MatchOverall
-    locus_grades: dict = {}
-    patient_pairs: list[TopPair] = []
-    donor_pairs: list[TopPair] = []
-
-
-# ── Init match grader (singleton) ──────────────────────────────────
-
-_match_grader: Optional[MatchGrader] = None
-
-
-def get_grader() -> MatchGrader:
-    global _match_grader
-    if _match_grader is None:
-        _match_grader = MatchGrader()
-    return _match_grader
+    populations_available: list = []
+    imputed_pairs: list[ImputedPair] = []
 
 
 # ── Endpoints ──────────────────────────────────────────────────────
 
+
 @app.get("/health")
 def health_check():
+    """Return service status and reference database summary."""
     eng = get_engine()
     return {
         "status": "ok",
         "service": "HaploStats",
-        "version": "0.1.0",
-        "haplotypes_in_reference": len(eng.full_ref) if eng.full_ref else 577,
+        "version": "0.2.0",
+        "population": eng.population,
+        "haplotypes_in_reference": len(eng._all_haplotypes) if eng._all_haplotypes else 0,
+        "populations_available": POPULATION_ORDER,
     }
 
 
@@ -187,9 +176,22 @@ def impute(request: ImputeRequest, population: str = "Global"):
     """
     Impute phased haplotype pairs from an unphased patient genotype.
 
-    - Missing loci → treated as unknown, imputed with progressive EM
-    - Population parameter selects reference frequency column
+    Returns the top-ranked pairs with per-population diplotype
+    frequencies (2pq / p²) for all reference populations (AFA, API,
+    CAU, HIS, Global, European, Spanish, Mexican, Arab).
+
+    - Missing loci are treated as unconstrained
+    - Population parameter selects which population's posterior
+      is used for ranking
     """
+    # Validate population parameter
+    if population not in POPULATION_ORDER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown population '{population}'. "
+                   f"Available: {', '.join(POPULATION_ORDER)}"
+        )
+
     # Build genotype dict from the pydantic model
     patient_genotype = {}
     for loc in ALL_LOCI:
@@ -207,186 +209,61 @@ def impute(request: ImputeRequest, population: str = "Global"):
             detail="No typed loci provided. At least one locus is required."
         )
 
-    # Run engine
+    # Remove None entries before passing to engine
+    clean_genotype = {
+        loc: alleles
+        for loc, alleles in patient_genotype.items()
+        if alleles is not None
+    }
+
+    # Run Bayesian engine
     engine = get_engine(population)
-    result = engine.progressive_em(patient_genotype)
+    result = engine.calculate_posterior(clean_genotype)
 
-    # Format blocks
-    blocks = []
-    for b in result.get('blocks', []):
-        blocks.append(BlockInfo(
-            block=b.get('block', ''),
-            haplotypes=b.get('haplotypes', 0),
-            pairs_before_em=b.get('pairs_before_em', 0),
-            pairs_after_trim=b.get('pairs_after_trim', 0),
-            converged_iterations=b.get('converged_iterations', 0),
-        ))
+    # Handle empty result
+    if 'error' in result:
+        return ImputeResponse(
+            status="error",
+            population=population,
+            patient_genotype={
+                LOCUS_LABEL.get(k, k): v
+                for k, v in clean_genotype.items()
+            },
+            total_possible_pairs=0,
+            entropy=0.0,
+            populations_available=POPULATION_ORDER,
+            imputed_pairs=[],
+        )
 
-    # Format top pairs
-    top_pairs = []
-    for t3 in result.get('top_3', []):
-        top_pairs.append(TopPair(
-            rank=t3.get('rank', 0),
-            haplotype_1=t3.get('haplotype_1', ''),
-            haplotype_2=t3.get('haplotype_2', ''),
-            posterior=t3.get('posterior', 0.0),
-            cumulative=t3.get('cumulative', 0.0),
-            h1_frequency=t3.get('h1_frequency', 0.0),
-            h2_frequency=t3.get('h2_frequency', 0.0),
+    # Format imputed pairs with full population frequency dictionaries
+    imputed_pairs = []
+    for p in result.get('pairs', []):
+        # Build population frequencies dict (all values, not just non-zero)
+        pop_freqs = {}
+        for pop_name in POPULATION_ORDER:
+            pop_freqs[pop_name] = p['population_frequencies'].get(pop_name, 0.0)
+
+        imputed_pairs.append(ImputedPair(
+            rank=p['rank'],
+            haplotype_1=p['haplotype_1'],
+            haplotype_2=p['haplotype_2'],
+            posterior=p['posterior'],
+            cumulative=p['cumulative'],
+            is_homozygous=p.get('is_homozygous', False),
+            population_frequencies=PopulationFrequencies(**pop_freqs),
         ))
 
     return ImputeResponse(
         status="success",
-        population=result.get('population', population),
+        population=population,
         patient_genotype={
             LOCUS_LABEL.get(k, k): v
-            for k, v in patient_genotype.items()
-            if v is not None
+            for k, v in clean_genotype.items()
         },
-        total_possible_pairs=result.get('total_pairs_final', 0),
+        total_possible_pairs=result.get('total_possible_pairs', 0),
         entropy=result.get('entropy', 0.0),
-        blocks=blocks,
-        top_pairs=top_pairs,
-    )
-
-
-@app.post("/compare", response_model=CompareResponse)
-def compare(request: CompareRequest):
-    """
-    Compare a patient and a donor for HLA matching.
-
-    Both genotypes are imputed independently, then the top-ranked
-    haplotype pairs are compared locus-by-locus and assigned
-    clinical match grades (A = allele match, P = potential, M = mismatch).
-    """
-    population = request.population or "Global"
-    engine = get_engine(population)
-    grader = get_grader()
-
-    # Select loci set
-    if request.grades == "extended":
-        match_loci = EXTENDED_MATCH_LOCL
-    elif request.grades == "full":
-        match_loci = FULL_MATCH_LOCL
-    else:
-        match_loci = CORE_MATCH_LOCL
-
-    # Helper: build genotype from ImputeRequest
-    def build_genotype(req: ImputeRequest) -> dict:
-        gt = {}
-        for loc in ALL_LOCI:
-            val = getattr(req, loc, None)
-            if val is not None and len(val) > 0:
-                gt[loc] = [str(a).strip() for a in val if a is not None]
-            else:
-                gt[loc] = None
-        return gt
-
-    # Impute patient
-    p_gt = build_genotype(request.patient)
-    typed_p = sum(1 for v in p_gt.values() if v is not None)
-    if typed_p == 0:
-        raise HTTPException(400, detail="Patient has no typed loci")
-    p_result = engine.progressive_em(p_gt)
-
-    # Impute donor
-    d_gt = build_genotype(request.donor)
-    typed_d = sum(1 for v in d_gt.values() if v is not None)
-    if typed_d == 0:
-        raise HTTPException(400, detail="Donor has no typed loci")
-    d_result = engine.progressive_em(d_gt)
-
-    # Format top pairs
-    def fmt_pairs(result: dict) -> list[TopPair]:
-        pairs = []
-        for t3 in result.get('top_3', []):
-            pairs.append(TopPair(
-                rank=t3.get('rank', 0),
-                haplotype_1=t3.get('haplotype_1', ''),
-                haplotype_2=t3.get('haplotype_2', ''),
-                posterior=t3.get('posterior', 0.0),
-                cumulative=t3.get('cumulative', 0.0),
-                h1_frequency=t3.get('h1_frequency', 0.0),
-                h2_frequency=t3.get('h2_frequency', 0.0),
-            ))
-        return pairs
-
-    p_top = fmt_pairs(p_result)
-    d_top = fmt_pairs(d_result)
-
-    # Grade (handle empty results gracefully)
-    if not p_top:
-        patient_unmatchable = True
-    else:
-        patient_unmatchable = False
-
-    if not d_top:
-        donor_unmatchable = True
-    else:
-        donor_unmatchable = False
-
-    if patient_unmatchable or donor_unmatchable:
-        locus_grades = {}
-        for loc in match_loci:
-            label = LOCUS_LABEL.get(loc, loc)
-            explanation = "Patient has no matching haplotypes in reference" if patient_unmatchable else ""
-            if donor_unmatchable:
-                explanation = "Donor has no matching haplotypes in reference" if not explanation else "Both unmatchable"
-            locus_grades[label] = LocusGrade(
-                grade='?',
-                patient_alleles=[],
-                donor_alleles=[],
-                explanation=explanation,
-            )
-        return CompareResponse(
-            status="success",
-            population=population,
-            match_overall=MatchOverall(
-                overall_grade="UNMATCHABLE",
-                compatibility="No match possible — haplotype(s) outside reference",
-                total_loci_scored=0,
-                allele_matches=0,
-                potential_matches=0,
-                mismatches=0,
-            ),
-            locus_grades=locus_grades,
-            patient_pairs=p_top,
-            donor_pairs=d_top,
-        )
-
-    match_result = grader.compare_profiles(
-        p_top[0].model_dump() if hasattr(p_top[0], 'model_dump') else p_top[0],
-        d_top[0].model_dump() if hasattr(d_top[0], 'model_dump') else d_top[0],
-        loci=match_loci,
-    )
-
-    # Build locus grades
-    locus_grades = {}
-    for label, lr in match_result['loci'].items():
-        locus_grades[label] = LocusGrade(
-            grade=lr['grade'],
-            patient_alleles=lr['patient_alleles'],
-            donor_alleles=lr['donor_alleles'],
-            patient_posterior=lr.get('patient_posterior', 0),
-            explanation=lr['explanation'],
-        )
-
-    overall = match_result['overall']
-
-    return CompareResponse(
-        status="success",
-        population=population,
-        match_overall=MatchOverall(
-            overall_grade=overall['overall_grade'],
-            compatibility=overall['compatibility'],
-            total_loci_scored=overall['total_loci_scored'],
-            allele_matches=overall['allele_matches'],
-            potential_matches=overall['potential_matches'],
-            mismatches=overall['mismatches'],
-        ),
-        locus_grades=locus_grades,
-        patient_pairs=p_top,
-        donor_pairs=d_top,
+        populations_available=POPULATION_ORDER,
+        imputed_pairs=imputed_pairs,
     )
 
 
@@ -395,5 +272,5 @@ def compare(request: CompareRequest):
 if __name__ == "__main__":
     port = int(os.environ.get("HAPLOSTATS_PORT", 8000))
     host = os.environ.get("HAPLOSTATS_HOST", "0.0.0.0")
-    print(f"🦞 HaploStats API starting on {host}:{port}")
+    print(f"🦞 HaploStats Population Explorer on {host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
