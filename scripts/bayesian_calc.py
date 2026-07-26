@@ -1,130 +1,120 @@
 #!/usr/bin/env python3
 """
-HaploStats — Bayesian Inference Module (Multi-Population)
-Phase 6+: Posterior probability calculation with all-population diplotype
-frequencies (Hardy-Weinberg 2pq / p²).
+HaploStats — Bayesian Inference Module (Normalized DB)
+Phase Final: Posterior probability calculation against the normalized 2-field
+reference database (haplostats_normalized.db).
 
 Given an unphased 9-locus HLA genotype, find all possible phased haplotype
-pairs from the population reference and rank them by posterior probability.
-
-For every matched pair, this module returns the diplotype frequency for ALL
-populations in the reference database, not just one selected population.
+pairs and rank them by posterior probability (Hardy-Weinberg 2pq / p²).
 
 Bayes: P(H_pair | G) ∝ P(G | H_pair) × P(H_pair)
-  - P(H_pair) = k × P(H1) × P(H2), where k = 2 for heterozygotes, 1 for homozygotes
+  - P(H_pair) = k × P(H1) × P(H2), k = 2 (het), 1 (hom)
   - P(G | H_pair) = 1 if H1+H2 produce G, 0 otherwise
 """
 
 import sqlite3
-import json
+import math
 import sys
 from pathlib import Path
 from collections import defaultdict
-import math
-import pprint
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "db" / "haplostats.db"
+DB_PATH = BASE_DIR / "db" / "haplostats_normalized.db"
 
-# ── Multi-Population Frequency Column Map ──────────────────────────
-# These are the population frequency columns available in the reference DB.
-# Each maps a human-readable population code to its SQL column.
-# Uses standard transplant-registry codes where applicable.
+# ── Locus Definitions ──────────────────────────────────────────────
 
+LOCI = [
+    "hla_a", "hla_c", "hla_b", "hla_drb345",
+    "hla_drb1", "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1",
+]
+
+LOCUS_LABELS = [
+    "HLA-A", "HLA-C", "HLA-B", "HLA-DRB345",
+    "HLA-DRB1", "HLA-DQA1", "HLA-DQB1", "HLA-DPA1", "HLA-DPB1",
+]
+
+LOCUS_LABEL_MAP = dict(zip(LOCI, LOCUS_LABELS))
+
+# ── Population Frequency Column Map (new normalized DB) ──────────
+# Maps display name → SQL column (hap_freq) → display label
 POPULATION_COLUMNS = {
-    'Global':   'Global_freq',
-    'AFA':      'AfAm_freq',       # African American
-    'API':      'API_freq',        # Asian / Pacific Islander
-    'CAU':      'EuAm_freq',       # European American (Caucasian)
-    'HIS':      'USA_Hispanic_freq',  # US Hispanic
-    'NAM':      None,              # Native American — not in current reference
-    'European': 'European_freq',
-    'Spanish':  'Spanish_freq',
-    'Mexican':  'Mexican_freq',
-    'Arab':     'Arab_freq',
+    "Global": "Global_hap_freq",
+    "AFA":    "AFA_hap_freq",
+    "ASI":    "ASI_hap_freq",
+    "EUR":    "EUR_hap_freq",
+    "HIS":    "HIS_hap_freq",
 }
 
-# Shorthand list for iteration and serialisation order
-POPULATION_ORDER = ['Global', 'AFA', 'API', 'CAU', 'HIS', 'NAM',
-                    'European', 'Spanish', 'Mexican', 'Arab']
+POPULATION_ORDER = ["Global", "AFA", "ASI", "EUR", "HIS"]
+
+# ── Input Sanitizer ────────────────────────────────────────────────
+
+GENE_PREFIX_MAP = {
+    "hla_a":      "A",
+    "hla_c":      "C",
+    "hla_b":      "B",
+    "hla_drb345": None,  # special handling below
+    "hla_drb1":   "DRB1",
+    "hla_dqa1":   "DQA1",
+    "hla_dqb1":   "DQB1",
+    "hla_dpa1":   "DPA1",
+    "hla_dpb1":   "DPB1",
+}
 
 
-# ────────────────────────────────────────────────────────────────────
-# Utility: Allele Matching
-# ────────────────────────────────────────────────────────────────────
-
-def _normalise(allele: str) -> str:
-    """Strip whitespace and standardise formatting."""
-    return allele.strip().replace(' ', '')
-
-
-def _allele_matches(patient_allele: str, ref_allele: str) -> bool:
+def sanitize_allele(raw: str, locus: str) -> str:
     """
-    Check if a patient allele matches a reference allele.
-    Handles exact matches, JSON-encoded ambiguous arrays, and
-    resolution-level prefix matching (e.g., 2-field vs 4-field).
+    Sanitize a user-typed allele by prepending the correct gene prefix
+    if missing. Returns a string matching the normalized DB format.
+
+    For HLA-DRB345, accepts DRB3/DRB4/DRB5 (or 3/4/5) prefixes.
+    For all other loci, prepends the standard prefix (e.g. A*, C*, B*).
+
+    Examples:
+      "02:01" + hla_a       → "A*02:01"
+      "A*02:01" + hla_a     → "A*02:01"
+      "DRB3*01:01" + drb345 → "DRB3*01:01"
+      "3*01:01" + drb345    → "DRB3*01:01"
+      "01:01" + hla_drb1    → "DRB1*01:01"
     """
-    pa = _normalise(patient_allele)
-    ra = _normalise(ref_allele)
+    val = raw.strip()
+    if not val:
+        return ""
 
-    # 1. Exact string match
-    if pa == ra:
-        return True
+    # Already has a gene prefix with asterisk
+    if "*" in val:
+        gene_part = val.split("*", 1)[0]
 
-    # 2. Reference is a JSON array of possible alleles
-    if ra.startswith('['):
-        try:
-            candidates = json.loads(ra)
-        except (json.JSONDecodeError, TypeError):
-            return False
-        for candidate in candidates:
-            if _allele_matches(pa, candidate):
-                return True
-        return False
+        # DRB345: normalize shorthand (3→DRB3, 4→DRB4, 5→DRB5)
+        if locus == "hla_drb345":
+            if gene_part in ("3", "4", "5"):
+                return f"DRB{gene_part}*{val.split('*', 1)[1]}"
+            # Already has DRB3/4/5 prefix — return as-is
+            if gene_part in ("DRB3", "DRB4", "DRB5"):
+                return val
+            # DRB1 also valid in this column (appears in reference)
+            if gene_part == "DRB1":
+                return val
 
-    # 3. Patient is a JSON array (unlikely but handle symmetrically)
-    if pa.startswith('['):
-        try:
-            candidates = json.loads(pa)
-        except (json.JSONDecodeError, TypeError):
-            return False
-        for candidate in candidates:
-            if _allele_matches(candidate, ra):
-                return True
-        return False
+        # Any other valid prefix — return as-is (should match DB)
+        return val
 
-    # 4. Prefix / resolution-level matching
-    parts_p = pa.split(':')
-    parts_r = ra.split(':')
-    min_len = min(len(parts_p), len(parts_r))
-    for i in range(min_len):
-        if parts_p[i] != parts_r[i]:
-            return False
-    return True
+    # No asterisk — prepend the correct prefix
+    if locus == "hla_drb345":
+        # DRB345 without a prefix is ambiguous — require prefix from user
+        return val  # will fail to match, handled downstream
+    else:
+        prefix = GENE_PREFIX_MAP.get(locus)
+        if prefix:
+            return f"{prefix}*{val}"
+        return val
 
 
-def _haplotype_covers_genotype(haplotype: dict, patient_allele1: str,
-                                patient_allele2: str, locus_col: str) -> bool:
-    """Check if a single haplotype carries one of the two patient alleles
-    at the given locus."""
-    h_allele = haplotype.get(locus_col, '')
-    if not h_allele or h_allele == '':
-        return False
-    return (_allele_matches(patient_allele1, h_allele) or
-            _allele_matches(patient_allele2, h_allele))
+# ── Hardy-Weinberg ─────────────────────────────────────────────────
 
-
-# ────────────────────────────────────────────────────────────────────
-# Hardy-Weinberg Diplotype Frequency
-# ────────────────────────────────────────────────────────────────────
-
-def _diplotype_frequency(h1_freq: float, h2_freq: float, is_homozygous: bool) -> float:
-    """
-    Compute the diplotype frequency under Hardy-Weinberg equilibrium.
-
-    - Heterozygous pair: 2 × p × q  (k = 2)
-    - Homozygous pair:   p²          (k = 1)
-    """
+def diplotype_frequency(h1_freq: float, h2_freq: float,
+                         is_homozygous: bool) -> float:
+    """Compute 2pq (het) or p² (hom) under HWE."""
     if h1_freq <= 0.0 or h2_freq <= 0.0:
         return 0.0
     if is_homozygous:
@@ -132,37 +122,18 @@ def _diplotype_frequency(h1_freq: float, h2_freq: float, is_homozygous: bool) ->
     return 2.0 * h1_freq * h2_freq
 
 
-# ────────────────────────────────────────────────────────────────────
-# HaploMath Engine
-# ────────────────────────────────────────────────────────────────────
+# ── HaploMath Engine ────────────────────────────────────────────────
 
 class HaploMath:
-    """
-    Bayesian haplotype inference engine (multi-population).
+    """Bayesian haplotype inference engine (normalized 2-field DB)."""
 
-    Connects to haplostats.db and provides posterior probability
-    calculations for unphased patient genotypes.  Unlike the original
-    single-population engine, this version loads ALL population frequency
-    columns and returns per-population diplotype frequencies (2pq / p²)
-    for every matched haplotype pair.
-    """
-
-    LOCI = ['hla_a', 'hla_c', 'hla_b', 'hla_drb345', 'hla_drb1',
-            'hla_dqa1', 'hla_dqb1', 'hla_dpa1', 'hla_dpb1']
-
-    LOCUS_LABELS = ['HLA-A', 'HLA-C', 'HLA-B', 'HLA-DRB345', 'HLA-DRB1',
-                    'HLA-DQA1', 'HLA-DQB1', 'HLA-DPA1', 'HLA-DPB1']
-
-    def __init__(self, db_path: str = None, population: str = 'Global'):
+    def __init__(self, db_path: str = None, population: str = "Global"):
         self.db_path = str(db_path or DB_PATH)
-        self.population = population
-        self.freq_col = f'{population}_freq'
+        self.population = population if population in POPULATION_ORDER else "Global"
         self.conn = None
-        self._all_haplotypes = None  # cached list (all freq cols loaded)
+        self._all_haplotypes = None
 
     def connect(self):
-        """Open database connection and cache all haplotypes
-        with all population frequency columns."""
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self._load_haplotypes()
@@ -174,332 +145,225 @@ class HaploMath:
             self.conn = None
 
     def _load_haplotypes(self):
-        """
-        Cache all haplotypes from the reference database, loading EVERY
-        population frequency column so we can compute per-population
-        diplotype frequencies later.
-        """
+        """Cache all haplotypes with ALL population frequency columns."""
         cur = self.conn.cursor()
-
-        # Build column list: loci + ALL frequency columns
-        freq_cols = [col for col in POPULATION_COLUMNS.values() if col is not None]
-        all_cols = ', '.join(self.LOCI + freq_cols)
-
+        freq_cols = [col for col in POPULATION_COLUMNS.values() if col]
+        all_cols = ", ".join(LOCI + freq_cols)
         rows = cur.execute(
             f"SELECT {all_cols} FROM haplotypes "
-            f"WHERE {self.freq_col} IS NOT NULL "
-            f"ORDER BY {self.freq_col} DESC"
+            f"WHERE Global_hap_freq IS NOT NULL "
+            f"ORDER BY Global_hap_freq DESC"
         ).fetchall()
-
         self._all_haplotypes = [dict(r) for r in rows]
-        print(f"  [HaploMath] Loaded {len(self._all_haplotypes)} haplotypes "
-              f"(all populations, {len(freq_cols)} freq columns)")
+        sys.stderr.write(
+            f"  [HaploMath] Loaded {len(self._all_haplotypes)} haplotypes "
+            f"({len(freq_cols)} pop freq cols)\n"
+        )
 
-    # ── Public API ─────────────────────────────────────────────────
+    def _haplotype_matches(self, hap: dict, patient_alleles: list,
+                            locus: str) -> bool:
+        """Check if haplotype carries at least one patient allele at locus."""
+        hap_val = hap.get(locus, "")
+        if not hap_val:
+            return False
+        for pa in patient_alleles:
+            if pa and pa == hap_val:
+                return True
+        return False
 
     def calculate_posterior(self, genotype: dict) -> dict:
         """
-        Main entry point — multi-population version.
+        Main entry point: compute all valid phased pairs and rank by posterior.
 
         Parameters
         ----------
         genotype : dict
-            Maps locus_col -> [allele1, allele2]
-            Missing loci are treated as unconstrained (any match).
+            Maps locus → [allele1, allele2]  (already sanitized)
 
         Returns
         -------
-        dict with keys:
-            'patient_genotype'    : input genotype (normalised)
-            'population'          : selected population for ranking
-            'total_possible_pairs': int
-            'pairs'               : list of dicts sorted by primary-pop posterior
-            'top_pair'            : dict (highest posterior)
-            'entropy'             : float (Shannon entropy of posterior)
-            'populations_available' : list of population codes returned
+        dict with keys: patient_genotype, population, total_possible_pairs,
+                        entropy, populations_available, pairs[]
         """
-        constrained_loci = [loc for loc in self.LOCI if loc in genotype]
+        constrained_loci = [loc for loc in LOCI if loc in genotype]
 
-        # ── Step 1: Filter haplotypes to those matching at least one
-        #            patient allele at every constrained locus ────────
+        # Step 1: Filter haplotypes to those matching every constrained locus
         candidates = []
         for hap in self._all_haplotypes:
-            valid = True
+            ok = True
             for loc in constrained_loci:
-                a1, a2 = genotype[loc]
-                if not _haplotype_covers_genotype(hap, a1, a2, loc):
-                    valid = False
+                a1 = genotype[loc][0]
+                a2 = genotype[loc][1] if len(genotype[loc]) > 1 else a1
+                if a1 and not self._haplotype_matches(hap, [a1, a2], loc):
+                    ok = False
                     break
-            if valid:
+            if ok:
                 candidates.append(hap)
 
-        # ── Step 2: Build all valid haplotype pairs ─────────────────
+        # Step 2 & 3: Build valid pairs with per-population diplotype freqs
         pairs_raw = []
         n_cand = len(candidates)
+        primary_col = POPULATION_COLUMNS.get(self.population, "Global_hap_freq")
 
         for i in range(n_cand):
             h1 = candidates[i]
             for j in range(i, n_cand):
                 h2 = candidates[j]
 
-                # Verify that (H1, H2) together cover both alleles at
-                # every constrained locus
-                valid_pair = True
+                # Verify the pair covers both alleles at each constrained locus
+                valid = True
                 for loc in constrained_loci:
-                    a1, a2 = genotype[loc]
-                    h1_val = h1.get(loc, '')
-                    h2_val = h2.get(loc, '')
-
-                    # Collect all allele strings from both haplotypes
-                    set_h = set()
-                    for val in (h1_val, h2_val):
-                        if val.startswith('['):
-                            try:
-                                for x in json.loads(val):
-                                    set_h.add(_normalise(x))
-                            except Exception:
-                                set_h.add(_normalise(val))
-                        else:
-                            set_h.add(_normalise(val))
-
-                    # Both patient alleles must appear in the combined set
-                    if not (_allele_matches(a1, h1_val) or _allele_matches(a1, h2_val)):
-                        valid_pair = False
+                    a1, a2 = genotype[loc][0], genotype[loc][1] if len(genotype[loc]) > 1 else genotype[loc][0]
+                    h1v = h1.get(loc, "")
+                    h2v = h2.get(loc, "")
+                    # Both patient alleles must be covered by at least one haplotype
+                    c1 = (a1 and (a1 == h1v or a1 == h2v))
+                    c2 = (a2 and (a2 == h1v or a2 == h2v))
+                    if not (c1 and c2):
+                        valid = False
                         break
-                    if not (_allele_matches(a2, h1_val) or _allele_matches(a2, h2_val)):
-                        valid_pair = False
-                        break
-
-                if not valid_pair:
+                if not valid:
                     continue
 
-                # ── Step 3: Compute per-population diplotype frequencies ──
-                is_homozygous = (i == j)
+                # Per-population diplotype frequencies
+                is_hom = (i == j)
                 pop_freqs = {}
-
                 for pop_name, col_name in POPULATION_COLUMNS.items():
                     if col_name is None:
                         pop_freqs[pop_name] = 0.0
                     else:
                         f1 = h1.get(col_name) or 0.0
                         f2 = h2.get(col_name) or 0.0
-                        freq = _diplotype_frequency(f1, f2, is_homozygous)
-                        pop_freqs[pop_name] = round(freq, 8)
+                        pop_freqs[pop_name] = round(
+                            diplotype_frequency(f1, f2, is_hom), 10
+                        )
 
-                # Use the primary population (self.population) for ranking
-                # Fall back to Global if selected population has no column
-                raw_col = POPULATION_COLUMNS.get(self.population)
-                primary_col = raw_col if raw_col else 'Global_freq'
-                f1_primary = h1.get(primary_col) or 0.0
-                f2_primary = h2.get(primary_col) or 0.0
-                primary_joint = _diplotype_frequency(f1_primary, f2_primary, is_homozygous)
+                # Primary population joint probability (for ranking)
+                f1p = h1.get(primary_col) or 0.0
+                f2p = h2.get(primary_col) or 0.0
+                primary_joint = diplotype_frequency(f1p, f2p, is_hom)
 
                 if primary_joint <= 0.0:
                     continue
 
-                h1_label = self._make_haplotype_label(h1)
-                h2_label = self._make_haplotype_label(h2)
+                h1_label = self._make_label(h1)
+                h2_label = self._make_label(h2)
 
                 pairs_raw.append({
-                    'haplotype_1': h1_label,
-                    'haplotype_2': h2_label,
-                    'joint_prob': primary_joint,
-                    'is_homozygous': is_homozygous,
-                    'population_frequencies': pop_freqs,
-                    'h1_id': i,
-                    'h2_id': j,
+                    "haplotype_1": h1_label,
+                    "haplotype_2": h2_label,
+                    "joint_prob": primary_joint,
+                    "is_homozygous": is_hom,
+                    "population_frequencies": pop_freqs,
+                    "h1_id": i,
+                    "h2_id": j,
                 })
 
-        # ── Step 4: Normalise → posterior probabilities (primary pop) ──
-        total_primary = sum(p['joint_prob'] for p in pairs_raw)
-
-        if total_primary == 0.0:
+        # Step 4: Normalize → posterior probabilities
+        total = sum(p["joint_prob"] for p in pairs_raw)
+        if total == 0.0:
             return {
-                'patient_genotype': genotype,
-                'population': self.population,
-                'total_possible_pairs': 0,
-                'pairs': [],
-                'top_pair': None,
-                'entropy': 0.0,
-                'populations_available': POPULATION_ORDER,
-                'error': 'No matching haplotype pairs found in any population.'
+                "patient_genotype": genotype,
+                "population": self.population,
+                "total_possible_pairs": 0,
+                "entropy": 0.0,
+                "populations_available": POPULATION_ORDER,
+                "error": "No matching haplotype pairs found.",
+                "pairs": [],
             }
 
         for p in pairs_raw:
-            p['posterior'] = round(p['joint_prob'] / total_primary, 8)
+            p["posterior"] = round(p["joint_prob"] / total, 10)
 
-        # Sort descending by primary-pop posterior
-        pairs_raw.sort(key=lambda x: x['posterior'], reverse=True)
+        pairs_raw.sort(key=lambda x: x["posterior"], reverse=True)
 
-        # ── Step 5: Rank and build response ─────────────────────────
-        ranked_pairs = []
+        # Step 5: Rank
+        ranked = []
         cumulative = 0.0
-
-        for rank_idx, p in enumerate(pairs_raw, start=1):
-            cumulative += p['posterior']
-
-            ranked_pairs.append({
-                'rank': rank_idx,
-                'haplotype_1': p['haplotype_1'],
-                'haplotype_2': p['haplotype_2'],
-                'posterior': p['posterior'],
-                'cumulative': round(cumulative, 8),
-                'is_homozygous': p['is_homozygous'],
-                'population_frequencies': p['population_frequencies'],
+        for rank_idx, p in enumerate(pairs_raw, 1):
+            cumulative += p["posterior"]
+            ranked.append({
+                "rank": rank_idx,
+                "haplotype_1": p["haplotype_1"],
+                "haplotype_2": p["haplotype_2"],
+                "posterior": p["posterior"],
+                "cumulative": round(cumulative, 10),
+                "is_homozygous": p["is_homozygous"],
+                "population_frequencies": p["population_frequencies"],
             })
 
-        # ── Shannon entropy of the primary-population posterior ──────
+        # Shannon entropy
         entropy = 0.0
         for p in pairs_raw:
-            if p['posterior'] > 0:
-                entropy -= p['posterior'] * math.log2(p['posterior'])
-
-        top = ranked_pairs[0] if ranked_pairs else None
+            if p["posterior"] > 0:
+                entropy -= p["posterior"] * math.log2(p["posterior"])
 
         return {
-            'patient_genotype': {k: list(v) for k, v in genotype.items()},
-            'population': self.population,
-            'total_candidate_haplotypes': n_cand,
-            'total_possible_pairs': len(ranked_pairs),
-            'pairs': ranked_pairs,
-            'top_pair': top,
-            'entropy': round(entropy, 4),
-            'populations_available': POPULATION_ORDER,
+            "patient_genotype": genotype,
+            "population": self.population,
+            "total_candidate_haplotypes": n_cand,
+            "total_possible_pairs": len(ranked),
+            "pairs": ranked,
+            "entropy": round(entropy, 4),
+            "populations_available": POPULATION_ORDER,
         }
 
-    # ── Helpers ─────────────────────────────────────────────────────
-
-    @staticmethod
-    def _make_haplotype_label(hap: dict) -> str:
-        """Build a compact human-readable haplotype label."""
+    def _make_label(self, hap: dict) -> str:
+        """Build a concise haplotype label."""
         parts = []
-        labels = ['HLA-A', 'HLA-C', 'HLA-B', 'DRB345', 'DRB1',
-                  'DQA1', 'DQB1', 'DPA1', 'DPB1']
-        locus_keys = ['hla_a', 'hla_c', 'hla_b', 'hla_drb345', 'hla_drb1',
-                      'hla_dqa1', 'hla_dqb1', 'hla_dpa1', 'hla_dpb1']
-        for lbl, lk in zip(labels, locus_keys):
-            val = hap.get(lk, '')
+        for loc, lbl in zip(LOCI, LOCUS_LABELS):
+            val = hap.get(loc, "")
             if val:
-                if val.startswith('['):
-                    try:
-                        arr = json.loads(val)
-                        if len(arr) <= 2:
-                            val = '/'.join(arr)
-                        else:
-                            val = f"{arr[0]}/...({len(arr)} alleles)"
-                    except Exception:
-                        pass
                 parts.append(f"{lbl}={val}")
             else:
                 parts.append(f"{lbl}=?")
-        return ' | '.join(parts)
+        return " | ".join(parts)
 
 
-# ────────────────────────────────────────────────────────────────────
-# Mock Patient Genotype (Hardcoded Test)
-# ────────────────────────────────────────────────────────────────────
+# ── Main (test) ─────────────────────────────────────────────────────
 
-def build_mock_patient():
-    """
-    Create a hardcoded unphased 9-locus patient genotype.
-
-    This patient has the two most common European haplotypes:
-      H1: A*01:01 C*07:01 B*08:01 DRB3*01:01 DRB1*03:01 DQA1*05:01
-          DQB1*02:01 DPA1*01:03 DPB1*04:01
-      H2: A*03:01 C*07:02 B*07:02 DRB5*01:01 DRB1*15:01 DQA1*01:02
-          DQB1*06:02 DPA1*01:03 DPB1*04:01
-    """
-    genotype = {
-        'hla_a':      ['A*01:01:01:01', 'A*03:01:01:01'],
-        'hla_c':      ['C*07:01:01:01', 'C*07:02:01:03'],
-        'hla_b':      ['B*08:01:01:01', 'B*07:02:01'],
-        'hla_drb345': ['DRB3*01:01:02:01', 'DRB5*01:01:01'],
-        'hla_drb1':   ['DRB1*03:01:01:01SG', 'DRB1*15:01:01:01SG'],
-        'hla_dqa1':   ['DQA1*05:01:01:02', 'DQA1*01:02:01:01SG'],
-        'hla_dqb1':   ['DQB1*02:01:01', 'DQB1*06:02:01'],
-        'hla_dpa1':   ['DPA1*01:03:01:02', 'DPA1*01:03:01:02'],  # homozygous
-        'hla_dpb1':   ['DPB1*04:01:01:01', 'DPB1*04:01:01:01'],  # homozygous
-    }
-    return genotype
-
-
-# ────────────────────────────────────────────────────────────────────
-# Main: Run Bayesian Calculation on Mock Patient
-# ────────────────────────────────────────────────────────────────────
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("=" * 72)
-    print("  HaploStats — Bayesian Inference Engine (Multi-Population)")
+    print("  HaploStats — Bayesian Inference (Normalized DB)")
     print("=" * 72)
 
-    engine = HaploMath(population='Global')
+    engine = HaploMath(population="Global")
     engine.connect()
 
-    patient = build_mock_patient()
-    print("\n📋 Mock Patient Genotype (Unphased):")
-    print("-" * 72)
+    # Test with a simple genotype using 2-field alleles
+    patient = {
+        "hla_a":      ["A*01:01", "A*03:01"],
+        "hla_c":      ["C*07:01", "C*07:02"],
+        "hla_b":      ["B*08:01", "B*07:02"],
+        "hla_drb345": ["DRB3*01:01", "DRB5*01:01"],
+        "hla_drb1":   ["DRB1*03:01", "DRB1*15:01"],
+        "hla_dqa1":   ["DQA1*05:01", "DQA1*01:02"],
+        "hla_dqb1":   ["DQB1*02:01", "DQB1*06:02"],
+        "hla_dpa1":   ["DPA1*01:03", "DPA1*01:03"],
+        "hla_dpb1":   ["DPB1*04:01", "DPB1*04:01"],
+    }
+
+    print("\n📋 Patient Genotype:")
     for loc, alleles in patient.items():
-        if alleles[0] == alleles[1]:
-            print(f"  {loc:15} {alleles[0]:30} (homozygous)")
-        else:
-            print(f"  {loc:15} {alleles[0]:30} / {alleles[1]}")
-    print()
+        tag = " (hom)" if alleles[0] == alleles[1] else ""
+        print(f"  {loc:15} {alleles[0]:15} / {alleles[1]}{tag}")
 
     result = engine.calculate_posterior(patient)
 
-    # ── Print Results ───────────────────────────────────────────────
-    print(f"\n📊 Bayesian Posterior Results (ranking by {result['population']})")
-    print(f"   Total candidate haplotypes: {result['total_candidate_haplotypes']}")
-    print(f"   Total possible pairs:       {result['total_possible_pairs']}")
-    print(f"   Entropy (uncertainty):      {result['entropy']} bits")
-    print(f"   Populations available:      {', '.join(result['populations_available'])}")
+    print(f"\n📊 Results (ranked by {result['population']}):")
+    print(f"   Candidate haplotypes: {result.get('total_candidate_haplotypes', 'N/A')}")
+    print(f"   Possible pairs:       {result['total_possible_pairs']}")
+    print(f"   Entropy:              {result.get('entropy', 0)} bits")
     print()
 
-    if result['pairs']:
-        print(f"{'Rank':>5} {'Posterior':>10} {'Cumulative':>10}  Pair + Population Frequencies")
-        print(f"   {'='*72}")
-        for p in result['pairs'][:5]:
-            rank = p['rank']
-            post = p['posterior']
-            cum = p['cumulative']
-            h1 = p['haplotype_1']
-            h2 = p['haplotype_2']
-
-            # Format population frequencies
-            pop_freqs = p['population_frequencies']
-            freqs_str = ' | '.join(
-                f"{k}={v:.6f}" for k, v in pop_freqs.items() if v > 0
-            )
-
-            # Truncate long labels
-            if len(h1) > 60:
-                h1 = h1[:57] + '...'
-            if len(h2) > 60:
-                h2 = h2[:57] + '...'
-
-            print(f"  {rank:>4}  {post:>8.6f}  {cum:>8.6f}   H1: {h1}")
-            print(f"  {'':>5} {'':>10} {'':>10}   H2: {h2}")
-            print(f"  {'':>5} {'':>10} {'':>10}   💠 {freqs_str}")
-            print()
-    else:
-        print("  ❌ No matching haplotype pairs found.")
-        print("  Check that patient alleles exist in the reference database.")
-
-    # Print full JSON payload (top 3 pairs)
-    print("\n📦 Full JSON Payload (Top 3 pairs) for API:")
-    print("-" * 72)
-    payload = {
-        'population': result['population'],
-        'total_possible_pairs': result['total_possible_pairs'],
-        'entropy': result['entropy'],
-        'populations_available': result['populations_available'],
-        'pairs': [
-            {k: p[k] for k in ['rank', 'posterior', 'cumulative',
-                                'is_homozygous', 'population_frequencies']}
-            for p in result['pairs'][:3]
-        ],
-    }
-    print(pprint.pformat(payload, indent=2, width=100))
+    for p in result["pairs"][:5]:
+        print(f"  #{p['rank']} posterior={p['posterior']:.6f} cum={p['cumulative']:.6f}")
+        print(f"     H1: {p['haplotype_1'][:80]}")
+        print(f"     H2: {p['haplotype_2'][:80]}")
+        pf = p["population_frequencies"]
+        parts = " | ".join(f"{k}={v:.2e}" for k, v in pf.items() if v > 0)
+        print(f"     💠 {parts}")
+        print()
 
     engine.close()
-    print("\n✅ Multi-population Bayesian calculation complete.")
+    print("✅ Bayesian engine ready.")

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-HaploStats — FastAPI Web Service (Population Explorer)
-Phase 11+: Population-aware REST API returning multi-population
+HaploStats — FastAPI Web Service (Normalized DB)
+Phase Final: Population-aware REST API returning multi-population
 diplotype frequencies (2pq / p²) for every imputed haplotype pair.
+
+Connects to db/haplostats_normalized.db (strict 2-field resolution).
 
 Endpoints:
   POST /impute  — submit unphased patient genotype → ranked phased haplotypes
-                   with per-population diplotype frequencies (AFA, API, CAU,
-                   HIS, Global, and more)
   GET  /health  — service health check
   GET  /        — population explorer web dashboard
 """
 
 import sys
 import os
+import re
 from pathlib import Path
 
-# Ensure HaploStats project root is on the path
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -29,16 +29,15 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 
-from scripts.bayesian_calc import HaploMath, POPULATION_ORDER
+from scripts.bayesian_calc import HaploMath, POPULATION_ORDER, sanitize_allele, LOCUS_LABEL_MAP
 
 # ── App Initialisation ─────────────────────────────────────────────
 
 app = FastAPI(
     title="HaploStats — HLA Haplotype Population Explorer",
     description="Clinical-grade Bayesian haplotype imputation engine "
-                "returning per-population diplotype frequencies (2pq / p²) "
-                "for all reference populations (AFA, API, CAU, HIS, Global).",
-    version="0.2.0",
+                "returning per-population diplotype frequencies (2pq / p²).",
+    version="1.0.0",
 )
 
 app.add_middleware(
@@ -48,7 +47,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files (web dashboard)
 STATIC_DIR = HERE.parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -56,30 +54,21 @@ if STATIC_DIR.exists():
 
 @app.get("/")
 def serve_dashboard():
-    """Serve the population explorer web dashboard at the root URL."""
     idx = STATIC_DIR / "index.html"
     if idx.exists():
         return FileResponse(str(idx))
-    return {
-        "status": "ok",
-        "message": "HaploStats Population Explorer API running. "
-                   "Dashboard static files not found."
-    }
+    return {"status": "ok", "message": "HaploStats API running."}
 
 
-# ── Locus constants ────────────────────────────────────────────────
+# ── Locus Constants ────────────────────────────────────────────────
 
-LOCUS_LABEL = {
-    'hla_a': 'HLA-A', 'hla_c': 'HLA-C', 'hla_b': 'HLA-B',
-    'hla_drb345': 'HLA-DRB345', 'hla_drb1': 'HLA-DRB1',
-    'hla_dqa1': 'HLA-DQA1', 'hla_dqb1': 'HLA-DQB1',
-    'hla_dpa1': 'HLA-DPA1', 'hla_dpb1': 'HLA-DPB1',
-}
-
-ALL_LOCI = list(LOCUS_LABEL.keys())
+ALL_LOCI = [
+    "hla_a", "hla_c", "hla_b", "hla_drb345",
+    "hla_drb1", "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1",
+]
 
 
-# ── Global engine instance (lazy-init on first request) ────────────
+# ── Global Engine ─────────────────────────────────────────────────
 
 _engine: Optional[HaploMath] = None
 
@@ -92,49 +81,53 @@ def get_engine(population: str = "Global") -> HaploMath:
     return _engine
 
 
+# ── Input Sanitizer ────────────────────────────────────────────────
+
+def sanitize_genotype(genotype: dict) -> dict:
+    """
+    Intercept user input and prepend correct gene identifiers.
+
+    Rules:
+      - If allele has no '*' prefix, add the correct gene prefix
+        (e.g., "02:01" for hla_a → "A*02:01")
+      - For hla_drb345, require DRB3/DRB4/DRB5 (or 3/4/5) prefix
+      - Preserve already-correctly-prefixed alleles
+
+    Returns a new dict with sanitized allele lists.
+    """
+    sanitized = {}
+    for locus, alleles in genotype.items():
+        if alleles is None or len(alleles) == 0:
+            continue
+        sanitized[locus] = [sanitize_allele(a, locus) for a in alleles]
+    return sanitized
+
+
 # ── Pydantic Schemas ───────────────────────────────────────────────
 
 
 class ImputeRequest(BaseModel):
-    """
-    Patient unphased genotype. Each field is optional.
-    Missing loci are treated as unknown.
-
-    Examples:
-      {"hla_a": ["01:01", "02:01"],
-       "hla_b": ["08:01", "44:02"],
-       "hla_drb1": ["03:01", "04:01"]}
-    """
-    hla_a: Optional[list] = None
-    hla_c: Optional[list] = None
-    hla_b: Optional[list] = None
+    """Patient unphased genotype. Each field is optional."""
+    hla_a:      Optional[list] = None
+    hla_c:      Optional[list] = None
+    hla_b:      Optional[list] = None
     hla_drb345: Optional[list] = None
-    hla_drb1: Optional[list] = None
-    hla_dqa1: Optional[list] = None
-    hla_dqb1: Optional[list] = None
-    hla_dpa1: Optional[list] = None
-    hla_dpb1: Optional[list] = None
+    hla_drb1:   Optional[list] = None
+    hla_dqa1:   Optional[list] = None
+    hla_dqb1:   Optional[list] = None
+    hla_dpa1:   Optional[list] = None
+    hla_dpb1:   Optional[list] = None
 
 
 class PopulationFrequencies(BaseModel):
-    """
-    Diplotype frequencies (Hardy-Weinberg 2pq / p²) across all
-    reference populations for a single haplotype pair.
-    """
     Global: float = 0.0
-    AFA: float = 0.0
-    API: float = 0.0
-    CAU: float = 0.0
-    HIS: float = 0.0
-    NAM: float = 0.0
-    European: float = 0.0
-    Spanish: float = 0.0
-    Mexican: float = 0.0
-    Arab: float = 0.0
+    AFA:    float = 0.0
+    ASI:    float = 0.0
+    EUR:    float = 0.0
+    HIS:    float = 0.0
 
 
 class ImputedPair(BaseModel):
-    """A single phased haplotype pair with all-population frequencies."""
     rank: int
     haplotype_1: str = ""
     haplotype_2: str = ""
@@ -145,7 +138,6 @@ class ImputedPair(BaseModel):
 
 
 class ImputeResponse(BaseModel):
-    """Top-level API response with multi-population frequency data."""
     status: str
     population: str
     patient_genotype: dict
@@ -160,15 +152,15 @@ class ImputeResponse(BaseModel):
 
 @app.get("/health")
 def health_check():
-    """Return service status and reference database summary."""
     eng = get_engine()
     return {
         "status": "ok",
         "service": "HaploStats",
-        "version": "0.2.0",
+        "version": "1.0.0",
         "population": eng.population,
         "haplotypes_in_reference": len(eng._all_haplotypes) if eng._all_haplotypes else 0,
         "populations_available": POPULATION_ORDER,
+        "database": "haplostats_normalized.db",
     }
 
 
@@ -176,16 +168,8 @@ def health_check():
 def impute(request: ImputeRequest, population: str = "Global"):
     """
     Impute phased haplotype pairs from an unphased patient genotype.
-
-    Returns the top-ranked pairs with per-population diplotype
-    frequencies (2pq / p²) for all reference populations (AFA, API,
-    CAU, HIS, Global, European, Spanish, Mexican, Arab).
-
-    - Missing loci are treated as unconstrained
-    - Population parameter selects which population's posterior
-      is used for ranking
+    Returns top-ranked pairs with per-population diplotype frequencies.
     """
-    # Validate population parameter
     if population not in POPULATION_ORDER:
         raise HTTPException(
             status_code=400,
@@ -193,41 +177,42 @@ def impute(request: ImputeRequest, population: str = "Global"):
                    f"Available: {', '.join(POPULATION_ORDER)}"
         )
 
-    # Build genotype dict from the pydantic model
-    patient_genotype = {}
+    # Build raw genotype dict
+    raw_genotype = {}
     for loc in ALL_LOCI:
         val = getattr(request, loc, None)
         if val is not None and len(val) > 0:
-            patient_genotype[loc] = [str(a).strip() for a in val if a is not None]
-        else:
-            patient_genotype[loc] = None
+            raw_genotype[loc] = [str(a).strip() for a in val if a is not None]
 
     # Validate: at least 1 typed locus
-    typed_count = sum(1 for v in patient_genotype.values() if v is not None)
-    if typed_count == 0:
+    if sum(1 for v in raw_genotype.values() if v) == 0:
         raise HTTPException(
             status_code=400,
             detail="No typed loci provided. At least one locus is required."
         )
 
-    # Remove None entries before passing to engine
-    clean_genotype = {
-        loc: alleles
-        for loc, alleles in patient_genotype.items()
-        if alleles is not None
-    }
+    # ── SANITIZE INPUT ──────────────────────────────────────────────
+    clean_genotype = sanitize_genotype(raw_genotype)
+
+    # Log sanitization differences for debugging
+    for loc in clean_genotype:
+        for i, (raw, clean) in enumerate(zip(
+            raw_genotype.get(loc, []),
+            clean_genotype[loc]
+        )):
+            if raw != clean:
+                sys.stderr.write(f"  [Sanitize] {loc}[{i}]: {raw} → {clean}\n")
 
     # Run Bayesian engine
     engine = get_engine(population)
     result = engine.calculate_posterior(clean_genotype)
 
-    # Handle empty result
-    if 'error' in result:
+    if "error" in result or not result.get("pairs"):
         return ImputeResponse(
-            status="error",
+            status="error" if "error" in result else "success",
             population=population,
             patient_genotype={
-                LOCUS_LABEL.get(k, k): v
+                LOCUS_LABEL_MAP.get(k, k): v
                 for k, v in clean_genotype.items()
             },
             total_possible_pairs=0,
@@ -236,42 +221,44 @@ def impute(request: ImputeRequest, population: str = "Global"):
             imputed_pairs=[],
         )
 
-    # Format imputed pairs with full population frequency dictionaries
+    # Format imputed pairs
     imputed_pairs = []
-    for p in result.get('pairs', []):
-        # Build population frequencies dict (all values, not just non-zero)
-        pop_freqs = {}
-        for pop_name in POPULATION_ORDER:
-            pop_freqs[pop_name] = p['population_frequencies'].get(pop_name, 0.0)
-
+    for p in result["pairs"]:
+        pf = p["population_frequencies"]
         imputed_pairs.append(ImputedPair(
-            rank=p['rank'],
-            haplotype_1=p['haplotype_1'],
-            haplotype_2=p['haplotype_2'],
-            posterior=p['posterior'],
-            cumulative=p['cumulative'],
-            is_homozygous=p.get('is_homozygous', False),
-            population_frequencies=PopulationFrequencies(**pop_freqs),
+            rank=p["rank"],
+            haplotype_1=p["haplotype_1"],
+            haplotype_2=p["haplotype_2"],
+            posterior=p["posterior"],
+            cumulative=p["cumulative"],
+            is_homozygous=p["is_homozygous"],
+            population_frequencies=PopulationFrequencies(
+                Global=pf.get("Global", 0.0),
+                AFA=pf.get("AFA", 0.0),
+                ASI=pf.get("ASI", 0.0),
+                EUR=pf.get("EUR", 0.0),
+                HIS=pf.get("HIS", 0.0),
+            ),
         ))
 
     return ImputeResponse(
         status="success",
         population=population,
         patient_genotype={
-            LOCUS_LABEL.get(k, k): v
+            LOCUS_LABEL_MAP.get(k, k): v
             for k, v in clean_genotype.items()
         },
-        total_possible_pairs=result.get('total_possible_pairs', 0),
-        entropy=result.get('entropy', 0.0),
+        total_possible_pairs=result["total_possible_pairs"],
+        entropy=result.get("entropy", 0.0),
         populations_available=POPULATION_ORDER,
         imputed_pairs=imputed_pairs,
     )
 
 
-# ── Main (for direct execution) ────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     port = int(os.environ.get("HAPLOSTATS_PORT", 8000))
     host = os.environ.get("HAPLOSTATS_HOST", "0.0.0.0")
-    print(f"🦞 HaploStats Population Explorer on {host}:{port}")
+    print(f"🦞 HaploStats v1.0.0 on {host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")

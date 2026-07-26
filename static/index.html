@@ -6,135 +6,205 @@
 <title>HaploStats — Population Explorer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
 <style>
+  /* ═══════════════════════════════════════════════════════════════
+     HaploStats — Clinical-Grade Population Explorer UI
+     Stark white, professional, modern clinical aesthetic.
+     ═══════════════════════════════════════════════════════════════ */
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --white:       #ffffff;
-    --bg:          #f8f9fb;
-    --border:      #e2e6ee;
-    --shadow:      0 4px 24px rgba(0, 0, 0, 0.06);
-    --text:        #1a1d23;
-    --text-dim:    #6b7280;
-    --text-faint:  #9ca3af;
-    --blue:        #0066cc;
-    --blue-hover:  #0052a3;
-    --blue-light:  #e8f1fa;
-    --green:       #059669;
-    --amber:       #d97706;
-    --red:         #dc2626;
-    --row-even:    #fafbfc;
-    --font:        'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --white:         #ffffff;
+    --bg:            #f6f8fa;
+    --border:        #dde1e8;
+    --border-light:  #eef0f4;
+    --shadow:        0 2px 12px rgba(0,0,0,0.04), 0 8px 32px rgba(0,0,0,0.06);
+    --text:          #16181c;
+    --text-secondary:#5a6070;
+    --text-muted:    #959caa;
+    --accent:        #0060df;
+    --accent-hover:  #004eb3;
+    --accent-light:  #e3edfc;
+    --green:         #0e7c4b;
+    --amber:         #b45b0b;
+    --red:           #c42a2a;
+    --row-alt:       #f8f9fc;
+    --font:          'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
 
-  html { font-size: 15px; }
+  html { font-size: 15px; -webkit-font-smoothing: antialiased; }
   body {
     font-family: var(--font);
     background: var(--white);
     color: var(--text);
     min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 40px 20px 80px;
+    line-height: 1.5;
   }
 
-  /* ── Header ─────────────────────────────────────────────── */
+  /* ── Header ───────────────────────────────────────────────── */
 
-  .header {
-    text-align: center;
+  .app-header {
+    border-bottom: 1px solid var(--border);
+    padding: 20px 0 18px;
     margin-bottom: 32px;
   }
-  .header h1 {
-    font-size: 28px;
+  .app-header .inner {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 28px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+  .app-header h1 {
+    font-size: 22px;
     font-weight: 700;
-    letter-spacing: -0.4px;
-  }
-  .header h1 span { color: var(--blue); }
-  .header p {
-    color: var(--text-dim);
-    font-size: 14px;
-    margin-top: 5px;
-  }
-  .header .version {
-    color: var(--text-faint);
-    font-size: 12px;
-    margin-top: 2px;
-  }
-
-  /* ── Main Card ──────────────────────────────────────────── */
-
-  .card {
-    width: 100%;
-    max-width: 960px;
-    background: var(--white);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    padding: 32px 36px;
-    margin-bottom: 28px;
-  }
-
-  .card-title {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 20px;
+    letter-spacing: -0.3px;
     color: var(--text);
   }
-  .card-title small {
-    font-weight: 400;
+  .app-header h1 span { color: var(--accent); }
+  .app-header .tagline {
     font-size: 13px;
-    color: var(--text-dim);
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+  .app-header .badge {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--row-alt);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    padding: 3px 10px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── Layout ────────────────────────────────────────────────── */
+
+  .main-container {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 28px 80px;
+  }
+
+  .card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+  }
+
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 18px;
+    letter-spacing: -0.1px;
+  }
+  .section-title .note {
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--text-muted);
     margin-left: 8px;
   }
 
-  /* ── Input Grid ─────────────────────────────────────────── */
+  /* ── Allele Input Grid ────────────────────────────────────── */
 
-  .input-grid {
+  .allele-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px 20px;
-    margin-bottom: 22px;
+    grid-template-columns: 120px 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
   }
-  .input-group {
-    display: flex;
-    flex-direction: column;
+
+  .grid-header {
+    display: contents;
   }
-  .input-group label {
-    font-size: 12px;
-    font-weight: 600;
+  .grid-header > div {
+    font-size: 11px;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--text-dim);
-    margin-bottom: 4px;
-  }
-  .input-group input {
-    font-family: var(--font);
-    font-size: 14px;
+    color: var(--text-muted);
+    background: var(--bg);
     padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .locus-row {
+    display: contents;
+  }
+  .locus-row > div {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+  }
+  .locus-row:last-child > div {
+    border-bottom: none;
+  }
+
+  .locus-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .locus-label small {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-left: 3px;
+  }
+
+  .allele-grid input {
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 10px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 5px;
     background: var(--white);
     color: var(--text);
-    transition: border-color 0.15s, box-shadow 0.15s;
     outline: none;
+    width: 100%;
+    transition: border-color 0.12s, box-shadow 0.12s;
   }
-  .input-group input:focus {
-    border-color: var(--blue);
-    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.12);
+  .allele-grid input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2.5px rgba(0, 96, 223, 0.12);
   }
-  .input-group input::placeholder {
-    color: var(--text-faint);
-    font-size: 13px;
+  .allele-grid input::placeholder {
+    color: var(--text-muted);
+    font-weight: 400;
+    font-size: 12px;
   }
 
-  /* Make last lone item span full width on two-column grid */
-  .input-grid .input-group:last-child:nth-child(odd) {
+  /* ── Section dividers within grid ─────────────────────────── */
+
+  .section-divider {
+    display: contents;
+  }
+  .section-divider > div {
     grid-column: 1 / -1;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--accent);
+    background: var(--accent-light);
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
   }
 
-  /* ── Button ─────────────────────────────────────────────── */
+  /* ── Button ───────────────────────────────────────────────── */
 
   .btn-row {
     display: flex;
@@ -143,27 +213,56 @@
   }
   .btn {
     font-family: var(--font);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
-    padding: 12px 40px;
+    padding: 11px 36px;
     border: none;
-    border-radius: 8px;
+    border-radius: 7px;
     cursor: pointer;
-    transition: background 0.15s, transform 0.1s;
+    transition: background 0.12s, transform 0.08s;
   }
-  .btn:active { transform: scale(0.98); }
+  .btn:active { transform: scale(0.97); }
   .btn-primary {
-    background: var(--blue);
+    background: var(--accent);
     color: var(--white);
   }
-  .btn-primary:hover { background: var(--blue-hover); }
+  .btn-primary:hover { background: var(--accent-hover); }
   .btn-primary:disabled {
-    background: #a0c4e8;
+    background: #91b8e6;
     cursor: not-allowed;
     transform: none;
   }
 
-  /* ── Results Table ──────────────────────────────────────── */
+  /* ── Spinner ──────────────────────────────────────────────── */
+
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2.5px solid rgba(255,255,255,0.3);
+    border-top-color: var(--white);
+    border-radius: 50%;
+    animation: spin 0.55s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Error Banner ─────────────────────────────────────────── */
+
+  .error-banner {
+    display: none;
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 7px;
+    color: var(--red);
+    font-size: 13px;
+  }
+  .error-banner.visible { display: block; }
+
+  /* ── Results ──────────────────────────────────────────────── */
 
   .results-area {
     display: none;
@@ -172,35 +271,38 @@
   .results-area.visible { display: block; }
 
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  .summary-bar {
+  .results-meta {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
-    padding: 12px 16px;
+    margin-bottom: 14px;
+    padding: 10px 14px;
     background: var(--bg);
-    border-radius: 8px;
-    font-size: 13px;
-    color: var(--text-dim);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
   }
-  .summary-bar strong { color: var(--text); font-weight: 600; }
+  .results-meta strong { color: var(--text); font-weight: 600; }
 
   .table-wrap {
     overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
   }
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: 12.5px;
   }
+
   thead th {
     background: var(--bg);
-    color: var(--text-dim);
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: 10.5px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.6px;
@@ -209,162 +311,160 @@
     border-bottom: 2px solid var(--border);
     white-space: nowrap;
   }
-  thead th:first-child { text-align: center; }
+  thead th:nth-child(1) { text-align: center; width: 44px; }
   thead th:nth-child(2),
   thead th:nth-child(3) { text-align: left; }
 
   tbody td {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border-light);
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
-  tbody td:first-child { text-align: center; color: var(--text-faint); font-weight: 600; }
+  tbody td:nth-child(1) { text-align: center; color: var(--text-muted); font-weight: 600; font-size: 11px; }
   tbody td:nth-child(2),
-  tbody td:nth-child(3) { text-align: left; font-size: 12px; color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+  tbody td:nth-child(3) { text-align: left; font-size: 11.5px; color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
 
-  tbody tr:nth-child(even) { background: var(--row-even); }
-  tbody tr:hover { background: var(--blue-light); }
+  tbody tr:nth-child(even) { background: var(--row-alt); }
+  tbody tr:hover { background: var(--accent-light); }
 
-  .freq-zero  { color: var(--text-faint); }
-  .freq-low   { color: #b91c1c; }
+  .freq-col { min-width: 76px; }
+  .freq-dash  { color: var(--text-muted); }
+  .freq-low   { color: var(--red); }
   .freq-mid   { color: var(--amber); }
   .freq-high  { color: var(--green); }
-  .freq-top   { color: var(--blue); font-weight: 600; }
+  .freq-top   { color: var(--accent); font-weight: 600; }
 
-  /* ── Section divider ────────────────────────────────────── */
-
-  .locus-section {
+  .results-count {
+    margin-top: 12px;
     font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--blue);
-    grid-column: 1 / -1;
-    padding: 6px 0 2px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 2px;
+    color: var(--text-muted);
+    text-align: center;
   }
 
-  /* ── Error ──────────────────────────────────────────────── */
+  /* ── Responsive ───────────────────────────────────────────── */
 
-  .error-banner {
-    display: none;
-    margin-top: 16px;
-    padding: 12px 16px;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 8px;
-    color: var(--red);
-    font-size: 13px;
-  }
-  .error-banner.visible { display: block; }
-
-  /* ── Loading spinner ────────────────────────────────────── */
-
-  .spinner {
-    display: inline-block;
-    width: 18px;
-    height: 18px;
-    border: 2.5px solid rgba(255,255,255,0.35);
-    border-top-color: var(--white);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-    vertical-align: middle;
-    margin-right: 8px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* ── Responsive ─────────────────────────────────────────── */
-
-  @media (max-width: 640px) {
-    body { padding: 20px 12px 60px; }
-    .card { padding: 20px; }
-    .input-grid { grid-template-columns: 1fr; }
-    table { font-size: 12px; }
-    thead th, tbody td { padding: 8px 6px; }
+  @media (max-width: 700px) {
+    .app-header .inner { flex-wrap: wrap; }
+    .app-header .badge { margin-left: 0; }
+    .main-container { padding: 0 14px 60px; }
+    .card { padding: 18px 14px; }
+    .allele-grid {
+      grid-template-columns: 95px 1fr 1fr;
+      font-size: 12px;
+    }
+    .allele-grid input { font-size: 12px; padding: 7px 8px; }
+    .locus-row > div { padding: 5px 8px; }
+    thead th, tbody td { padding: 7px 8px; font-size: 11px; }
+    tbody td:nth-child(2),
+    tbody td:nth-child(3) { max-width: 120px; }
   }
 </style>
 </head>
 <body>
 
-<!-- ── Header ─────────────────────────────────────────────── -->
+<!-- ═══════════════════ HEADER ═══════════════════════════════════ -->
 
-<div class="header">
-  <h1>HaploStats <span>Population Explorer</span></h1>
-  <p>Multi-population diplotype frequency lookup (2pq / p²)</p>
-  <div class="version">v0.2.0</div>
-</div>
+<header class="app-header">
+  <div class="inner">
+    <h1>HaploStats <span>Population Explorer</span></h1>
+    <span class="tagline">Multi-population diplotype frequency engine</span>
+    <span class="badge">v1.0.0</span>
+  </div>
+</header>
 
-<!-- ── Input Card ──────────────────────────────────────────── -->
+<!-- ═══════════════════ INPUT FORM ═══════════════════════════════ -->
+
+<div class="main-container">
 
 <div class="card">
-  <div class="card-title">Patient HLA Genotype <small>— enter unphased alleles (comma separated)</small></div>
+  <div class="section-title">
+    Patient HLA Genotype
+    <span class="note">— enter alleles for each locus (Allele 1 / Allele 2)</span>
+  </div>
 
-  <div class="input-grid">
+  <div class="allele-grid">
 
-    <div class="locus-section">Class I</div>
-
-    <div class="input-group">
-      <label for="hla_a">HLA-A</label>
-      <input type="text" id="hla_a" placeholder="e.g. 01:01, 03:01" autocomplete="off">
-    </div>
-    <div class="input-group">
-      <label for="hla_c">HLA-C</label>
-      <input type="text" id="hla_c" placeholder="e.g. 07:01, 07:02" autocomplete="off">
-    </div>
-    <div class="input-group">
-      <label for="hla_b">HLA-B</label>
-      <input type="text" id="hla_b" placeholder="e.g. 08:01, 44:02" autocomplete="off">
+    <div class="grid-header">
+      <div>Locus</div>
+      <div>Allele 1</div>
+      <div>Allele 2</div>
     </div>
 
-    <div class="locus-section">Class II — DR / DQ</div>
+    <!-- Class I -->
+    <div class="section-divider"><div>Class I</div></div>
 
-    <div class="input-group">
-      <label for="hla_drb345">HLA-DRB3/4/5</label>
-      <input type="text" id="hla_drb345" placeholder="e.g. DRB3*01:01, DRB5*01:01" autocomplete="off">
+    <div class="locus-row">
+      <div class="locus-label">HLA-A <small>A*</small></div>
+      <div><input type="text" id="hla_a_1" placeholder="e.g. 01:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_a_2" placeholder="e.g. 03:01" autocomplete="off"></div>
     </div>
-    <div class="input-group">
-      <label for="hla_drb1">HLA-DRB1</label>
-      <input type="text" id="hla_drb1" placeholder="e.g. 03:01, 04:01" autocomplete="off">
+    <div class="locus-row">
+      <div class="locus-label">HLA-C <small>C*</small></div>
+      <div><input type="text" id="hla_c_1" placeholder="e.g. 07:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_c_2" placeholder="e.g. 07:02" autocomplete="off"></div>
     </div>
-    <div class="input-group">
-      <label for="hla_dqa1">HLA-DQA1</label>
-      <input type="text" id="hla_dqa1" placeholder="e.g. 05:01, 01:02" autocomplete="off">
-    </div>
-    <div class="input-group">
-      <label for="hla_dqb1">HLA-DQB1</label>
-      <input type="text" id="hla_dqb1" placeholder="e.g. 02:01, 03:02" autocomplete="off">
+    <div class="locus-row">
+      <div class="locus-label">HLA-B <small>B*</small></div>
+      <div><input type="text" id="hla_b_1" placeholder="e.g. 08:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_b_2" placeholder="e.g. 44:02" autocomplete="off"></div>
     </div>
 
-    <div class="locus-section">Class II — DP</div>
+    <!-- Class II — DR/DQ -->
+    <div class="section-divider"><div>Class II — DR / DQ</div></div>
 
-    <div class="input-group">
-      <label for="hla_dpa1">HLA-DPA1</label>
-      <input type="text" id="hla_dpa1" placeholder="e.g. 01:03, 02:01" autocomplete="off">
+    <div class="locus-row">
+      <div class="locus-label">HLA-DRB345</div>
+      <div><input type="text" id="hla_drb345_1" placeholder="e.g. DRB3*01:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_drb345_2" placeholder="e.g. DRB5*01:01" autocomplete="off"></div>
     </div>
-    <div class="input-group">
-      <label for="hla_dpb1">HLA-DPB1</label>
-      <input type="text" id="hla_dpb1" placeholder="e.g. 04:01, 02:01" autocomplete="off">
+    <div class="locus-row">
+      <div class="locus-label">HLA-DRB1 <small>DRB1*</small></div>
+      <div><input type="text" id="hla_drb1_1" placeholder="e.g. 03:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_drb1_2" placeholder="e.g. 15:01" autocomplete="off"></div>
+    </div>
+    <div class="locus-row">
+      <div class="locus-label">HLA-DQA1 <small>DQA1*</small></div>
+      <div><input type="text" id="hla_dqa1_1" placeholder="e.g. 05:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_dqa1_2" placeholder="e.g. 01:02" autocomplete="off"></div>
+    </div>
+    <div class="locus-row">
+      <div class="locus-label">HLA-DQB1 <small>DQB1*</small></div>
+      <div><input type="text" id="hla_dqb1_1" placeholder="e.g. 02:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_dqb1_2" placeholder="e.g. 06:02" autocomplete="off"></div>
+    </div>
+
+    <!-- Class II — DP -->
+    <div class="section-divider"><div>Class II — DP</div></div>
+
+    <div class="locus-row">
+      <div class="locus-label">HLA-DPA1 <small>DPA1*</small></div>
+      <div><input type="text" id="hla_dpa1_1" placeholder="e.g. 01:03" autocomplete="off"></div>
+      <div><input type="text" id="hla_dpa1_2" placeholder="e.g. 02:01" autocomplete="off"></div>
+    </div>
+    <div class="locus-row">
+      <div class="locus-label">HLA-DPB1 <small>DPB1*</small></div>
+      <div><input type="text" id="hla_dpb1_1" placeholder="e.g. 04:01" autocomplete="off"></div>
+      <div><input type="text" id="hla_dpb1_2" placeholder="e.g. 02:01" autocomplete="off"></div>
     </div>
 
   </div>
 
   <div class="btn-row">
-    <button class="btn btn-primary" id="calcBtn" onclick="calculate()">Calculate Haplotype Frequencies</button>
+    <button class="btn btn-primary" id="calcBtn" onclick="calculate()">Calculate</button>
   </div>
 
   <div class="error-banner" id="errorBanner"></div>
 </div>
 
-<!-- ── Results Card ────────────────────────────────────────── -->
+<!-- ═══════════════════ RESULTS ══════════════════════════════════ -->
 
 <div class="card results-area" id="resultsArea">
-  <div class="card-title">Imputation Results</div>
+  <div class="section-title">Imputation Results</div>
 
-  <div class="summary-bar" id="summaryBar">
-    <span id="summaryText">—</span>
+  <div class="results-meta">
+    <span id="resultsMeta">—</span>
     <span id="entropyText"></span>
   </div>
 
@@ -375,33 +475,60 @@
           <th>Rank</th>
           <th>Haplotype 1</th>
           <th>Haplotype 2</th>
-          <th>Global</th>
-          <th>AFA</th>
-          <th>API</th>
-          <th>CAU</th>
-          <th>HIS</th>
-          <th>NAM</th>
+          <th class="freq-col">Global</th>
+          <th class="freq-col">AFA</th>
+          <th class="freq-col">ASI</th>
+          <th class="freq-col">EUR</th>
+          <th class="freq-col">HIS</th>
         </tr>
       </thead>
       <tbody id="resultsBody"></tbody>
     </table>
   </div>
+
+  <div class="results-count" id="resultsCount"></div>
 </div>
 
-<!-- ── Script ──────────────────────────────────────────────── -->
+</div>
+
+<!-- ═══════════════════ SCRIPT ═══════════════════════════════════ -->
 
 <script>
-// ── Frequency formatting ────────────────────────────────────
+// ── Helper: format allele input ──────────────────────────────────
+
+const LOCUS_PREFIX = {
+  hla_a:      "A",
+  hla_c:      "C",
+  hla_b:      "B",
+  hla_drb345: null,   // user must type DRB3/4/5*
+  hla_drb1:   "DRB1",
+  hla_dqa1:   "DQA1",
+  hla_dqb1:   "DQB1",
+  hla_dpa1:   "DPA1",
+  hla_dpb1:   "DPB1",
+};
+
+function formatAllele(raw, locus) {
+  const val = raw.trim();
+  if (!val) return "";
+  if (val.includes("*")) return val; // already has prefix
+  // DRB345 requires explicit gene prefix
+  if (locus === "hla_drb345") {
+    return val; // send raw, server will reject if not prefixed
+  }
+  const prefix = LOCUS_PREFIX[locus];
+  return prefix ? prefix + "*" + val : val;
+}
+
+// ── Frequency cell formatting ────────────────────────────────────
 
 function fmtFreq(val) {
-  if (val === 0 || val === 0.0) return '<span class="freq-zero">—</span>';
+  if (val === 0 || val === 0.0) return '<span class="freq-dash">—</span>';
   if (val >= 0.01) {
-    const pct = (val * 100).toFixed(2);
-    return `<span class="freq-top">${pct}%</span>`;
+    return `<span class="freq-top">${(val * 100).toFixed(2)}%</span>`;
   }
   if (val >= 0.001) {
-    const pct = (val * 100).toFixed(3);
-    return `<span class="freq-high">${pct}%</span>`;
+    return `<span class="freq-high">${(val * 100).toFixed(3)}%</span>`;
   }
   if (val >= 1e-5) {
     return `<span class="freq-mid">${val.toExponential(2)}</span>`;
@@ -409,139 +536,151 @@ function fmtFreq(val) {
   return `<span class="freq-low">${val.toExponential(2)}</span>`;
 }
 
-// ── Main calculation ────────────────────────────────────────
+// ── Build payload from inputs ────────────────────────────────────
 
-function parseAlleles(id) {
-  const el = document.getElementById(id);
-  if (!el) return null;
-  const raw = el.value.trim();
-  if (!raw) return null;
-  return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
-}
-
-async function calculate() {
-  const btn = document.getElementById('calcBtn');
-  const banner = document.getElementById('errorBanner');
-  const resultsArea = document.getElementById('resultsArea');
-  const tbody = document.getElementById('resultsBody');
-  const summaryText = document.getElementById('summaryText');
-  const entropyText = document.getElementById('entropyText');
-
-  // Hide previous results / errors
-  resultsArea.classList.remove('visible');
-  banner.classList.remove('visible');
-  banner.textContent = '';
-
-  // All 9 HLA loci the engine supports
-  const fields = [
-    'hla_a', 'hla_c', 'hla_b',
-    'hla_drb345', 'hla_drb1', 'hla_dqa1', 'hla_dqb1',
-    'hla_dpa1', 'hla_dpb1',
+function buildPayload() {
+  const loci = [
+    "hla_a", "hla_c", "hla_b",
+    "hla_drb345", "hla_drb1", "hla_dqa1", "hla_dqb1",
+    "hla_dpa1", "hla_dpb1",
   ];
 
-  // Parse inputs
   const payload = {};
   let hasData = false;
 
-  for (const field of fields) {
-    const alleles = parseAlleles(field);
-    if (alleles && alleles.length >= 1) {
-      payload[field] = alleles;
-      hasData = true;
+  for (const locus of loci) {
+    const key1 = locus + "_1";
+    const key2 = locus + "_2";
+    const el1 = document.getElementById(key1);
+    const el2 = document.getElementById(key2);
+    const a1 = el1 ? formatAllele(el1.value, locus) : "";
+    const a2 = el2 ? formatAllele(el2.value, locus) : "";
+
+    // If both empty, skip this locus entirely
+    if (!a1 && !a2) continue;
+
+    // If only one is filled, use it for both (homozygous assumption)
+    if (a1 && !a2) {
+      payload[locus] = [a1];
+    } else if (!a1 && a2) {
+      payload[locus] = [a2];
+    } else {
+      payload[locus] = [a1, a2];
     }
+    hasData = true;
   }
 
-  if (!hasData) {
-    banner.textContent = 'Please enter at least one HLA locus with typed alleles.';
-    banner.classList.add('visible');
+  return hasData ? payload : null;
+}
+
+// ── Main calculate function ───────────────────────────────────────
+
+async function calculate() {
+  const btn = document.getElementById("calcBtn");
+  const banner = document.getElementById("errorBanner");
+  const resultsArea = document.getElementById("resultsArea");
+  const tbody = document.getElementById("resultsBody");
+  const resultsMeta = document.getElementById("resultsMeta");
+  const entropyText = document.getElementById("entropyText");
+  const resultsCount = document.getElementById("resultsCount");
+
+  // Hide previous
+  resultsArea.classList.remove("visible");
+  banner.classList.remove("visible");
+  banner.textContent = "";
+
+  const payload = buildPayload();
+  if (!payload) {
+    banner.textContent = "Please enter at least one HLA allele.";
+    banner.classList.add("visible");
     return;
   }
 
-  // Button loading state
+  // Button loading
   const originalText = btn.innerHTML;
-  btn.innerHTML = '<span class="spinner"></span>Calculating…';
+  btn.innerHTML = '<span class="spinner"></span> Calculating…';
   btn.disabled = true;
 
   try {
-    const response = await fetch('/impute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const resp = await fetch("/impute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.detail || `Server error ${response.status}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${resp.status}`);
     }
 
-    const data = await response.json();
+    const data = await resp.json();
 
-    // Summary bar
-    const popUsed = data.population || 'Global';
-    const totalPairs = data.total_possible_pairs || 0;
-    const entropy = data.entropy !== undefined && data.entropy !== null
-                    ? `Shannon entropy: <strong>${data.entropy.toFixed(2)}</strong> bits`
-                    : '';
-    summaryText.innerHTML = `<strong>${totalPairs}</strong> possible pairs · Ranking by <strong>${popUsed}</strong> posterior`;
-    entropyText.innerHTML = entropy;
+    // Meta bar
+    const total = data.total_possible_pairs || 0;
+    const ep = data.entropy !== undefined ? data.entropy : null;
+    resultsMeta.innerHTML =
+      `<strong>${total}</strong> possible haplotype pairs`;
+    entropyText.innerHTML =
+      ep !== null ? `Entropy: <strong>${ep.toFixed(2)}</strong> bits` : "";
 
-    // Build table rows
+    // Table rows
     const pairs = data.imputed_pairs || [];
     if (pairs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--text-faint);">No matching haplotype pairs found.</td></tr>';
+      tbody.innerHTML =
+        '<tr><td colspan="8" style="text-align:center;padding:36px;color:var(--text-muted);">No matching haplotype pairs found.</td></tr>';
+      resultsCount.textContent = "";
     } else {
-      let html = '';
-      for (const pair of pairs) {
-        const pf = pair.population_frequencies || {};
+      let html = "";
+      for (const p of pairs) {
+        const pf = p.population_frequencies || {};
         html += `<tr>
-          <td>${pair.rank}</td>
-          <td title="${escapeHtml(pair.haplotype_1)}">${escapeHtml(trunc(pair.haplotype_1, 55))}</td>
-          <td title="${escapeHtml(pair.haplotype_2)}">${escapeHtml(trunc(pair.haplotype_2, 55))}</td>
+          <td>${p.rank}</td>
+          <td title="${esc(p.haplotype_1)}">${esc(trunc(p.haplotype_1, 48))}</td>
+          <td title="${esc(p.haplotype_2)}">${esc(trunc(p.haplotype_2, 48))}</td>
           <td>${fmtFreq(pf.Global)}</td>
           <td>${fmtFreq(pf.AFA)}</td>
-          <td>${fmtFreq(pf.API)}</td>
-          <td>${fmtFreq(pf.CAU)}</td>
+          <td>${fmtFreq(pf.ASI)}</td>
+          <td>${fmtFreq(pf.EUR)}</td>
           <td>${fmtFreq(pf.HIS)}</td>
-          <td>${fmtFreq(pf.NAM)}</td>
         </tr>`;
       }
       tbody.innerHTML = html;
+      resultsCount.textContent =
+        `Showing ${pairs.length} of ${total} total pairs`;
     }
 
-    // Show results
-    resultsArea.classList.add('visible');
-    resultsArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    resultsArea.classList.add("visible");
+    resultsArea.scrollIntoView({ behavior: "smooth", block: "start" });
 
   } catch (err) {
-    banner.textContent = err.message || 'An unexpected error occurred.';
-    banner.classList.add('visible');
+    banner.textContent = err.message || "An unexpected error occurred.";
+    banner.classList.add("visible");
   } finally {
     btn.innerHTML = originalText;
     btn.disabled = false;
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────────
 
-function trunc(str, maxLen) {
-  if (!str || str.length <= maxLen) return str;
-  return str.slice(0, maxLen) + '…';
+function trunc(str, max) {
+  if (!str || str.length <= max) return str;
+  return str.slice(0, max) + "…";
+}
+function esc(str) {
+  if (!str) return "";
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
+// ── Enter key to submit ──────────────────────────────────────────
 
-// ── Allow Enter key to submit ───────────────────────────────
-
-document.addEventListener('DOMContentLoaded', () => {
-  const inputs = document.querySelectorAll('.input-group input');
-  for (const input of inputs) {
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') calculate();
+document.addEventListener("DOMContentLoaded", () => {
+  const inputs = document.querySelectorAll(".allele-grid input");
+  for (const inp of inputs) {
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") calculate();
     });
   }
 });
