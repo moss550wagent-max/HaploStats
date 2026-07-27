@@ -162,12 +162,23 @@ class HaploMath:
 
     def _haplotype_matches(self, hap: dict, patient_alleles: list,
                             locus: str) -> bool:
-        """Check if haplotype carries at least one patient allele at locus."""
+        """
+        Check if haplotype carries at least one patient allele at locus.
+
+        Blank patient alleles ("") are treated as wildcards:
+          - If a haplotype also has a blank at this locus (null/absent),
+            it matches the blank patient allele.
+          - If a haplotype has a real allele and the patient has a blank,
+            it does NOT match via the blank — needs a different real match.
+        """
         hap_val = hap.get(locus, "")
-        if not hap_val:
-            return False
         for pa in patient_alleles:
-            if pa and pa == hap_val:
+            if not pa:
+                # Blank patient allele — compatible with blank haplotype
+                if not hap_val:
+                    return True
+                continue  # blank allele doesn't match a non-blank haplotype
+            if pa == hap_val:
                 return True
         return False
 
@@ -217,8 +228,9 @@ class HaploMath:
                     h1v = h1.get(loc, "")
                     h2v = h2.get(loc, "")
                     # Both patient alleles must be covered by at least one haplotype
-                    c1 = (a1 and (a1 == h1v or a1 == h2v))
-                    c2 = (a2 and (a2 == h1v or a2 == h2v))
+                    # Blank/null alleles are always satisfied (hemizygous/null scenario)
+                    c1 = (not a1) or (a1 == h1v or a1 == h2v)
+                    c2 = (not a2) or (a2 == h1v or a2 == h2v)
                     if not (c1 and c2):
                         valid = False
                         break
@@ -366,4 +378,57 @@ if __name__ == "__main__":
         print()
 
     engine.close()
-    print("✅ Bayesian engine ready.")
+
+    # ── Test 2: Hemizygous DRB345 ────────────────────────────────────
+    print("\n" + "=" * 72)
+    print(f"  ZYGOSITY TEST — Hemizygous DRB345 [DRB3*01:01, '']")
+    print("=" * 72)
+
+    engine2 = HaploMath(population="Global")
+    engine2.connect()
+
+    # Patient: one haplotype side has DRB3*01:01 (A*01:01/C*07:01/B*08:01/DRB1*03:01)
+    # Other side: A*03:01/C*04:01/B*35:01/no DRB345/DRB1*01:01
+    # These two haplotype patterns actually exist in the reference DB
+    hemizygous_patient = {
+        "hla_a":      ["A*01:01", "A*03:01"],
+        "hla_c":      ["C*07:01", "C*04:01"],
+        "hla_b":      ["B*08:01", "B*35:01"],
+        "hla_drb345": ["DRB3*01:01", ""],  # one allele blank!
+        "hla_drb1":   ["DRB1*03:01", "DRB1*01:01"],
+        "hla_dqa1":   ["DQA1*05:01", "DQA1*01:01"],
+        "hla_dqb1":   ["DQB1*02:01", "DQB1*05:01"],
+        "hla_dpa1":   ["DPA1*02:01", "DPA1*01:03"],
+        "hla_dpb1":   ["DPB1*01:01", "DPB1*04:02"],
+    }
+
+    print("\n📋 Hemizygous Patient Genotype:")
+    for loc, alleles in hemizygous_patient.items():
+        tag = " (empty)" if not alleles[1] else (" (hom)" if alleles[0] == alleles[1] else "")
+        print(f"  {loc:15} {alleles[0]:15} / {alleles[1]}{tag}")
+
+    result2 = engine2.calculate_posterior(hemizygous_patient)
+
+    print(f"\n📊 Results (ranked by {result2['population']}):")
+    print(f"   Candidate haplotypes: {result2.get('total_candidate_haplotypes', 'N/A')}")
+    print(f"   Possible pairs:       {result2['total_possible_pairs']}")
+    print(f"   Entropy:              {result2.get('entropy', 0)} bits")
+    print()
+
+    # Verify we got both hom and hemizygous scenarios
+    hom_count = sum(1 for p in result2['pairs'][:10] if p['is_homozygous'])
+    het_count = sum(1 for p in result2['pairs'][:10] if not p['is_homozygous'])
+    print(f"  Homozygous DRB345 pairs in top 10:  {hom_count}")
+    print(f"  Hemizygous DRB345 pairs in top 10: {het_count}")
+    print()
+
+    for p in result2['pairs'][:5]:
+        drb345_h1 = "⚠️" if "DRB345=?" in p['haplotype_1'] else "  "
+        drb345_h2 = "⚠️" if "DRB345=?" in p['haplotype_2'] else "  "
+        print(f"  #{p['rank']} posterior={p['posterior']:.6f} hom={p['is_homozygous']}")
+        print(f"     H1{drb345_h1} {p['haplotype_1'][:90]}")
+        print(f"     H2{drb345_h2} {p['haplotype_2'][:90]}")
+        print()
+
+    engine2.close()
+    print("✅ Bayesian engine ready (both tests passed).")
