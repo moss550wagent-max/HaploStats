@@ -324,7 +324,11 @@
   }
   tbody td:nth-child(1) { text-align: center; color: var(--text-muted); font-weight: 600; font-size: 11px; }
   tbody td:nth-child(2),
-  tbody td:nth-child(3) { text-align: left; font-size: 11.5px; color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  tbody td:nth-child(3) { text-align: left; font-size: 11px; color: var(--text); font-weight: 500; }
+  .haplotype-cell { font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace; word-break: break-all; white-space: normal; line-height: 1.55; padding: 2px 4px; border-radius: 3px; background: #f8f9fa; display: inline-block; max-width: 340px; }
+  .copy-btn { cursor: pointer; background: none; border: none; padding: 2px 6px; margin-left: 4px; font-size: 12px; vertical-align: middle; border-radius: 3px; transition: background 0.15s, transform 0.1s; line-height: 1; }
+  .copy-btn:hover { background: var(--border); transform: scale(1.12); }
+  .copy-btn:active { transform: scale(0.95); }
 
   tbody tr:nth-child(even) { background: var(--row-alt); }
   tbody tr:hover { background: var(--accent-light); }
@@ -473,8 +477,8 @@
       <thead>
         <tr>
           <th>Rank</th>
-          <th>Haplotype 1</th>
-          <th>Haplotype 2</th>
+          <th>Haplotype 1 <span style="font-size:10px;font-weight:400;color:var(--text-muted);">(click 📋)</span></th>
+          <th>Haplotype 2 <span style="font-size:10px;font-weight:400;color:var(--text-muted);">(click 📋)</span></th>
           <th class="freq-col">Global</th>
           <th class="freq-col">AFA</th>
           <th class="freq-col">ASI</th>
@@ -635,8 +639,8 @@ async function calculate() {
         const pf = p.population_frequencies || {};
         html += `<tr>
           <td>${p.rank}</td>
-          <td title="${esc(p.haplotype_1)}">${esc(trunc(p.haplotype_1, 48))}</td>
-          <td title="${esc(p.haplotype_2)}">${esc(trunc(p.haplotype_2, 48))}</td>
+          <td><span class="haplotype-cell">${esc(p.haplotype_1)}</span><button class="copy-btn" onclick="copyHaplotype('${escAttr(p.haplotype_1)}',this)" title="Copy haplotype">📋</button></td>
+          <td><span class="haplotype-cell">${esc(p.haplotype_2)}</span><button class="copy-btn" onclick="copyHaplotype('${escAttr(p.haplotype_2)}',this)" title="Copy haplotype">📋</button></td>
           <td>${fmtFreq(pf.Global)}</td>
           <td>${fmtFreq(pf.AFA)}</td>
           <td>${fmtFreq(pf.ASI)}</td>
@@ -663,15 +667,32 @@ async function calculate() {
 
 // ── Utilities ─────────────────────────────────────────────────────
 
-function trunc(str, max) {
-  if (!str || str.length <= max) return str;
-  return str.slice(0, max) + "…";
+function escAttr(str) {
+  if (!str) return "";
+  return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 function esc(str) {
   if (!str) return "";
   const d = document.createElement("div");
   d.textContent = str;
   return d.innerHTML;
+}
+
+// ── Copy to clipboard ────────────────────────────────────────────
+
+async function copyHaplotype(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = "✅";
+    btn.style.color = "#22c55e";
+    setTimeout(() => {
+      btn.textContent = "📋";
+      btn.style.color = "";
+    }, 2000);
+  } catch {
+    btn.textContent = "⚠️";
+    setTimeout(() => { btn.textContent = "📋"; }, 1500);
+  }
 }
 
 // ── Enter key to submit ──────────────────────────────────────────
