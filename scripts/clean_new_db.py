@@ -1,236 +1,245 @@
 #!/usr/bin/env python3
 """
-clean_new_db.py — HaploStats Data Ingestion & Normalization Reboot
+clean_new_db.py — HaploStats Data Ingestion (XLSX → Normalized DB)
 
-Reads the 2018 Global Full Haplotype Summary (79-column CSV exported from xlsx),
-normalises EVERY allele across all loci down to strict 2-field resolution,
-and writes a clean SQLite database.
+Reads the original raw spreadsheet (Table14_ACBDRB345DRB1DQDP_0221.xlsx) with
+STRICT COLUMN ANCHORING by absolute Excel column index.  No dynamic array
+packing — every column is mapped by its fixed position.
 
-Normalisation rules (applied in order):
-  1. Split ambiguous strings on '/', keep first allele.
-  2. Strip 'HLA-' prefix.
-  3. DRB345 exception: preserve DRB3/DRB4/DRB5 gene identifier (including DRB1
-     that appear in this column).
-  4. General truncation: keep only the first two colon-separated fields
-     (e.g., A*01:01:01:01 → A*01:01; DRB3*01:01:02:01 → DRB3*01:01).
-  5. Handle null-allele suffixes (N, L, S etc.) — dropped by field truncation.
+Features:
+  • Column-anchored parsing — no frameshift possible.
+  • Auto-correction of legacy frameshift rows (e.g. DRB1 allele in DRB345 col).
+  • Proper "Abs" / empty handling for DRB345.
+  • 2-field allele normalisation with DRB345 gene-prefix preservation.
+  • Population mapping: 9 xlsx groups → DB schema compatible with API.
 """
 
-import csv
 import re
 import sqlite3
 import sys
 from pathlib import Path
 
+import openpyxl
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-INPUT_CSV    = PROJECT_ROOT / "data" / "raw" / "Global_Full_Haplotype_Summary_2018.csv"
+INPUT_XLSX   = PROJECT_ROOT / "data" / "raw" / "Table14_ACBDRB345DRB1DQDP_0221.xlsx"
 OUTPUT_DB    = PROJECT_ROOT / "db" / "haplostats_normalized.db"
 
-# The 9 locus columns in the CSV
-LOCUS_COLS = [
-    "hla_a", "hla_c", "hla_b", "hla_drb345",
-    "hla_drb1", "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1",
+# ── Column Definitions (by absolute 0-based index in the xlsx) ────────────
+# HLA gene columns: indices 0–8
+HLA_COL_MAP = [
+    (0, "hla_a"),
+    (1, "hla_c"),
+    (2, "hla_b"),
+    (3, "hla_drb345"),
+    (4, "hla_drb1"),
+    (5, "hla_dqa1"),
+    (6, "hla_dqb1"),
+    (7, "hla_dpa1"),
+    (8, "hla_dpb1"),
 ]
 
-# Population column mapping: each pop has 5 sub-columns
-# (hap_count, hap_freq, hap_rank, family_count, sample_count)
-POP_GROUPS = [
-    ("Global",       "Global_hap_count",  "Global_hap_freq",  "Global_hap_rank",
-                      "Global_family_count", "Global_sample_count"),
-    ("AUSTRIA",      "AUSTRIA_hap_count", "AUSTRIA_hap_freq", "AUSTRIA_hap_rank",
-                      "AUSTRIA_family_count", "AUSTRIA_sample_count"),
-    ("KUWAIT",       "KUWAIT_hap_count",  "KUWAIT_hap_freq",  "KUWAIT_hap_rank",
-                      "KUWAIT_family_count", "KUWAIT_sample_count"),
-    ("AFA",          "AFA_hap_count",     "AFA_hap_freq",     "AFA_hap_rank",
-                      "AFA_family_count",    "AFA_sample_count"),
-    ("ASI",          "ASI_hap_count",     "ASI_hap_freq",     "ASI_hap_rank",
-                      "ASI_family_count",    "ASI_sample_count"),
-    ("EUR",          "EUR_hap_count",     "EUR_hap_freq",     "EUR_hap_rank",
-                      "EUR_family_count",    "EUR_sample_count"),
-    ("HIS",          "HIS_hap_count",     "HIS_hap_freq",     "HIS_hap_rank",
-                      "HIS_family_count",    "HIS_sample_count"),
-    ("OTHER",        "OTHER_hap_count",   "OTHER_hap_freq",   "OTHER_hap_rank",
-                      "OTHER_family_count",  "OTHER_sample_count"),
-    ("ARGENTINA",    "ARGENTINA_hap_count", "ARGENTINA_hap_freq", "ARGENTINA_hap_rank",
-                      "ARGENTINA_family_count", "ARGENTINA_sample_count"),
-    ("EGYPT",        "EGYPT_hap_count",   "EGYPT_hap_freq",   "EGYPT_hap_rank",
-                      "EGYPT_family_count",  "EGYPT_sample_count"),
-    ("GERMANY",      "GERMANY_hap_count", "GERMANY_hap_freq", "GERMANY_hap_rank",
-                      "GERMANY_family_count", "GERMANY_sample_count"),
-    ("GREECE",       "GREECE_hap_count",  "GREECE_hap_freq",  "GREECE_hap_rank",
-                      "GREECE_family_count", "GREECE_sample_count"),
-    ("SWITZERLAND",  "SWITZERLAND_hap_count", "SWITZERLAND_hap_freq",
-                      "SWITZERLAND_hap_rank", "SWITZERLAND_family_count",
-                      "SWITZERLAND_sample_count"),
-    ("CZECH",        "CZECH_hap_count",   "CZECH_hap_freq",   "CZECH_hap_rank",
-                      "CZECH_family_count",  "CZECH_sample_count"),
+HLA_DB_COLS = [name for _, name in HLA_COL_MAP]
+
+# Population columns: (start_col, pop_code, xlsx_label_fq, xlsx_label_n, xlsx_label_rank)
+# Each group is 3 columns: Fq, n, rank
+POP_COL_MAP = [
+    # (xlsx_fq_col, xlsx_n_col, xlsx_rank_col, db_prefix, display_name)
+    ( 9, 10, 11, "Global", "Global"),
+    (12, 13, 14, "EuAm",   "EuAm"),
+    (15, 16, 17, "AFA",    "AFA"),       # AfAm → AFA
+    (18, 19, 20, "HIS",    "HIS"),       # USA_Hispanic → HIS
+    (21, 22, 23, "EUR",    "EUR"),       # European → EUR
+    (24, 25, 26, "Spanish", "Spanish"),
+    (27, 28, 29, "Mexican", "Mexican"),
+    (30, 31, 32, "ASI",    "ASI"),       # API → ASI
+    (33, 34, 35, "Arab",   "Arab"),
 ]
+
+# Build the list of DB output column names
+POP_DB_COLS = []
+for fq_col, n_col, rk_col, db_prefix, _ in POP_COL_MAP:
+    POP_DB_COLS.append(f"{db_prefix}_hap_freq")
+    POP_DB_COLS.append(f"{db_prefix}_hap_count")
+    POP_DB_COLS.append(f"{db_prefix}_hap_rank")
 
 
 # ── Allele Normalisation ───────────────────────────────────────────────────
 
-def normalize_allele(raw: str, locus: str = "") -> str:
+def normalize_allele(raw, locus=""):
     """
     Normalise an allele string to strict 2-field resolution.
 
-    Edge cases handled in order:
-      1. Empty / null / whitespace-only → ""
-      2. Slash-separated ambiguous → take first part, recurse
-      3. Strip 'HLA-' prefix
-      4. DRB345 exception: preserve DRB3/DRB4/DRB5 gene identifier
-      5. General truncation: keep only first 2 colon-separated fields
-      6. Preserve '-' designations like '-' or 'Abs'
+    Rules:
+      1. Empty / null / whitespace / "Abs" / "-" → ""
+      2. Slash-separated ambiguous → take first part
+      3. Strip "HLA-" prefix
+      4. DRB345: preserve DRB3/DRB4/DRB5 gene prefix (also DRB1 if frameshift)
+      5. All other loci: standard prefix + 2-field truncation
+      6. Strip non-digit suffixes (N, L, S, SG) from last field
     """
-    if not raw or not str(raw).strip():
+    if raw is None:
         return ""
 
     val = str(raw).strip()
+    if not val or val in ("-", "Abs", "abs", "NULL", "N/A"):
+        return ""
 
-    # ── Handle slashes (ambiguous alleles) ───────────────────────────────
-    # e.g. "HLA-DRB1*03:01:01:01/HLA-DRB1*03:01:01:02"
-    #      "HLA-DQA1*01:02:01:01/HLA-DQA1*01:02:01:03/HLA-DQA1*01:02:01:05"
+    # ── Slash handling ──
     if "/" in val:
         first = val.split("/")[0].strip()
         return normalize_allele(first, locus)
 
-    # ── Strip HLA- prefix ────────────────────────────────────────────────
+    # ── Strip HLA- ──
     val = re.sub(r"^HLA-", "", val, flags=re.IGNORECASE)
 
-    # ── Preserve non-allele sentinels ─────────────────────────────────────
-    if val in ("-", "Abs", "abs", "NULL", ""):
-        return val if val in ("-", "Abs", "abs") else ""
-
     if "*" not in val:
-        return val  # no asterisk — return as-is
+        return val  # preserve raw sentinel values
 
     gene_part, allele_part = val.split("*", 1)
 
-    # ── DRB345 exception: preserve the specific gene identifier ──────────
-    if locus == "hla_drb345":
-        # Normalise gene prefix: "HLA-DRB3" → "DRB3"
-        gene_part = re.sub(r"^HLA-", "", gene_part, flags=re.IGNORECASE)
-
-        # Accept DRB1 (sometimes appears in this column)
-        if gene_part in ("DRB3", "DRB4", "DRB5", "DRB1", "3", "4", "5"):
-            if gene_part in ("3", "4", "5"):
-                gene_part = f"DRB{gene_part}"
-        # For anything else, keep the gene prefix as-is
-
-        fields = allele_part.split(":")
-        truncated = ":".join(fields[:2])
-        # Strip trailing non-digit suffixes (N, L, S, etc.) from last field
-        truncated = re.sub(r"(\d+)[A-Za-z]+$", r"\1", truncated)
-        return f"{gene_part}*{truncated}"
-
-    # ── All other loci: normalise gene prefix + truncate to 2 fields ─────
-    gene_part = re.sub(r"^HLA-", "", gene_part, flags=re.IGNORECASE)
+    # Strip SG suffix etc from fields
     fields = allele_part.split(":")
     truncated = ":".join(fields[:2])
-    # Strip trailing non-digit suffixes (N, L, S, etc.) from last field
+    # Strip trailing non-digit alpha suffixes from last field
     truncated = re.sub(r"(\d+)[A-Za-z]+$", r"\1", truncated)
+
+    if locus == "hla_drb345":
+        # Accept any DRB-prefixed gene
+        if gene_part in ("DRB3", "DRB4", "DRB5", "DRB1"):
+            pass  # preserve as-is
+        elif gene_part in ("3", "4", "5"):
+            gene_part = f"DRB{gene_part}"
+        else:
+            # Unknown prefix — still prefix with DRB
+            pass
+        return f"{gene_part}*{truncated}"
+
+    # All other loci — keep standard gene prefix
     return f"{gene_part}*{truncated}"
+
+
+# ── Frameshift Auto-Correction ─────────────────────────────────────────────
+
+def is_drb1_allele(val):
+    """Check if a normalized value looks like a DRB1* allele."""
+    return bool(re.match(r"^DRB1\*", str(val)))
+
+def auto_correct_row(row_values):
+    """
+    Detect and fix a frameshift in the 9 HLA columns.
+
+    A frameshift is detected when the DRB345 column contains a DRB1* allele
+    (meaning an empty DRB345 caused leftward column shift).
+
+    Fix: Move the DRB1* allele from DRB345 → DRB1,
+         and shift remaining locus values rightwards.
+    Returns (corrected_row, was_corrected).
+    """
+    hla_values = row_values[:9]  # 9 HLA cols
+    corrected = list(hla_values)
+
+    drb345_raw = hla_values[3]  # index 3 = hla_drb345
+    drb1_raw   = hla_values[4]  # index 4 = hla_drb1
+
+    # Check if DRB345 contains a DRB1* allele
+    drb345_norm = normalize_allele(drb345_raw, "hla_drb345")
+    if is_drb1_allele(drb345_norm):
+        # Frameshift detected!
+        # DRB345 → clear it (set to "")
+        # DRB1 → take the DRB1* value that was in DRB345
+        # DQA1, DQB1, DPA1, DPB1 → shift left (each takes the value of the next)
+        # This means: the whole block DRB1..DPB1 was shifted left by 1
+        corrected[3] = ""  # DRB345 = empty
+        corrected[4] = drb345_raw  # DRB1 = what was in DRB345
+        # Shift remaining: what was in DRB1 goes to DQA1, etc.
+        for i in range(5, 9):
+            corrected[i] = hla_values[i - 1]  # shift left
+
+        return (corrected + row_values[9:], True)
+
+    return (row_values, False)
 
 
 # ── Database Builder ───────────────────────────────────────────────────────
 
-def build_column_defs():
-    """Build SQL column definitions for the normalised table."""
-    cols = [f'"{c}" TEXT' for c in LOCUS_COLS]
-    for grp_name, *sub_cols in POP_GROUPS:
-        for sc in sub_cols:
-            if sc.endswith("_freq"):
-                cols.append(f'"{sc}" REAL')
-            elif sc.endswith("_rank") or sc.endswith("_count"):
-                cols.append(f'"{sc}" INTEGER')
-            else:
-                cols.append(f'"{sc}" REAL')
-    return ",\n  ".join(cols)
+def safe_float(val):
+    """Convert to float, returning None on empty/bad."""
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s or s in ("-", "", "nan", "NaN"):
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+def safe_int(val):
+    """Convert to int, returning None on empty/bad."""
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s or s in ("-", "", "nan", "NaN"):
+        return None
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return None
+
+
+def build_create_table_sql():
+    """Build CREATE TABLE DDL."""
+    cols = []
+    for _, name in HLA_COL_MAP:
+        cols.append(f'  "{name}" TEXT')
+    for col_name in POP_DB_COLS:
+        if col_name.endswith("_freq"):
+            cols.append(f'  "{col_name}" REAL')
+        else:
+            cols.append(f'  "{col_name}" INTEGER')
+    return "CREATE TABLE haplotypes (\n" + ",\n".join(cols) + "\n);"
 
 
 def build_insert_sql():
     """Build parameterised INSERT statement."""
-    all_cols = list(LOCUS_COLS)
-    for grp_name, *sub_cols in POP_GROUPS:
-        all_cols.extend(sub_cols)
-    placeholders = ", ".join(["?"] * len(all_cols))
+    all_cols = HLA_DB_COLS + POP_DB_COLS
     quoted = ", ".join(f'"{c}"' for c in all_cols)
+    placeholders = ", ".join("?" * len(all_cols))
     return f"INSERT INTO haplotypes ({quoted}) VALUES ({placeholders});"
 
 
-SAFE_FLOAT_RX = re.compile(r"^-?\d+(\.\d+)?([eE][+-]?\d+)?$")
-
-
-def safe_float(val):
-    """Convert to float, returning 0.0 on failure."""
-    if val is None or str(val).strip() in ("", "-"):
-        return 0.0
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return 0.0
-
-
-def safe_int(val):
-    """Convert to int, returning 0 on failure."""
-    if val is None or str(val).strip() in ("", "-"):
-        return 0
-    try:
-        return int(float(val))
-    except (ValueError, TypeError):
-        return 0
-
-
-# ── Test harness ───────────────────────────────────────────────────────────
+# ── Unit Tests ─────────────────────────────────────────────────────────────
 
 def run_tests():
-    """Run normalisation tests and print results."""
     tests = [
-        # (raw, locus, expected)
-        # 4-field → 2-field
-        ("HLA-A*01:01:01:01",            "hla_a",       "A*01:01"),
-        ("HLA-C*07:01:01:01",            "hla_c",       "C*07:01"),
-        ("HLA-B*08:01:01:01",            "hla_b",       "B*08:01"),
-
+        # Basic 4-field → 2-field
+        ("A*01:01:01:01",             "hla_a",       "A*01:01"),
+        ("C*07:01:01:01",             "hla_c",       "C*07:01"),
+        ("B*08:01:01:01",             "hla_b",       "B*08:01"),
+        # With HLA- prefix
+        ("HLA-A*01:01:01:01",         "hla_a",       "A*01:01"),
+        ("HLA-C*07:01:01:01",         "hla_c",       "C*07:01"),
         # 3-field → 2-field
-        ("HLA-DPB1*04:01:01",            "hla_dpb1",    "DPB1*04:01"),
-
-        # 2-field → 2-field (unchanged)
-        ("HLA-DRB1*01:03",               "hla_drb1",    "DRB1*01:03"),
-
-        # Slash-separated ambiguous → take first
-        ("HLA-DRB1*03:01:01:01/HLA-DRB1*03:01:01:02",
-                                          "hla_drb1",    "DRB1*03:01"),
-        ("HLA-DQA1*01:02:01:01/HLA-DQA1*01:02:01:03/HLA-DQA1*01:02:01:05",
-                                          "hla_dqa1",    "DQA1*01:02"),
-        ("HLA-DPB1*04:01:01:01/HLA-DPB1*04:01:01:02",
-                                          "hla_dpb1",    "DPB1*04:01"),
-
-        # DRB345 → preserve DRB3
-        ("HLA-DRB3*01:01:02:01",         "hla_drb345",  "DRB3*01:01"),
-        ("HLA-DRB3*02:02:01:01",         "hla_drb345",  "DRB3*02:02"),
-        ("HLA-DRB3*03:01:01",            "hla_drb345",  "DRB3*03:01"),
-
-        # DRB345 → preserve DRB4
-        ("HLA-DRB4*01:01:01:01",         "hla_drb345",  "DRB4*01:01"),
-        ("HLA-DRB4*01:03:01:01",         "hla_drb345",  "DRB4*01:03"),
-        ("HLA-DRB4*01:03:01:02N",        "hla_drb345",  "DRB4*01:03"),
-
-        # DRB345 → preserve DRB5
-        ("HLA-DRB5*01:01:01",            "hla_drb345",  "DRB5*01:01"),
-        ("HLA-DRB5*01:02",               "hla_drb345",  "DRB5*01:02"),
-        ("HLA-DRB5*01:08N",              "hla_drb345",  "DRB5*01:08"),
-
-        # DRB345 → DRB1 (also appears in this column)
-        ("HLA-DRB1*01:01:01",            "hla_drb345",  "DRB1*01:01"),
-
-        # Slash in DRB345
-        ("HLA-DRB3*01:01:02:01/HLA-DRB3*01:01:02:02",
-                                          "hla_drb345",  "DRB3*01:01"),
-
-        # Empty/null
-        ("",                              "hla_a",       ""),
-        ("  ",                            "hla_a",       ""),
+        ("DPB1*04:01:01",             "hla_dpb1",    "DPB1*04:01"),
+        # DRB345 - preserve gene
+        ("DRB3*01:01:02:01",          "hla_drb345",  "DRB3*01:01"),
+        ("DRB4*01:01:01:01",          "hla_drb345",  "DRB4*01:01"),
+        ("DRB5*01:01:01",             "hla_drb345",  "DRB5*01:01"),
+        # Strip N/L/S/SG suffix
+        ("DRB4*01:03:01:02N",         "hla_drb345",  "DRB4*01:03"),
+        ("DRB1*03:01:01:01SG",        "hla_drb1",    "DRB1*03:01"),
+        # Slash ambiguous
+        ("DPB1*04:01:01:01/DPB1*04:01:01:02",
+                                     "hla_dpb1",    "DPB1*04:01"),
+        # Empty / Abs
+        ("",                           "hla_drb345",  ""),
+        ("Abs",                        "hla_drb345",  ""),
+        ("-",                          "hla_drb345",  ""),
+        # DRB345 → DRB1 (frameshift case)
+        ("DRB1*01:01:01",             "hla_drb345",  "DRB1*01:01"),
+        ("HLA-DRB1*01:01:01",         "hla_drb345",  "DRB1*01:01"),
     ]
 
     print("=" * 72)
@@ -242,103 +251,133 @@ def run_tests():
         status = "✅" if result == expected else "❌"
         if result != expected:
             all_pass = False
-        print(f"  {status} normalize({raw!r:55s}, {locus:15s}) → {result!r:20s}  (expected {expected!r})")
-
+        print(f"  {status} normalize({raw!r:55s}, {locus:20s}) → {result!r:20s}  (expected {expected!r})")
     print(f"\n  → {'ALL PASS' if all_pass else 'SOME FAILED'}")
     print()
     return all_pass
 
 
-# ── Main pipeline ──────────────────────────────────────────────────────────
+# ── Main Pipeline ──────────────────────────────────────────────────────────
 
 def run():
-    # ── Run unit tests first ──────────────────────────────────────────────
-    tests_pass = run_tests()
-    if not tests_pass:
+    # ── Run unit tests ────────────────────────────────────────────────────
+    if not run_tests():
         print("❌ Unit tests failed — aborting.", file=sys.stderr)
         sys.exit(1)
 
-    if not INPUT_CSV.exists():
-        print(f"❌ Input CSV not found: {INPUT_CSV}", file=sys.stderr)
+    if not INPUT_XLSX.exists():
+        print(f"❌ Input XLSX not found: {INPUT_XLSX}", file=sys.stderr)
         sys.exit(1)
 
     OUTPUT_DB.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Read xlsx with strict column anchoring ────────────────────────────
+    wb = openpyxl.load_workbook(str(INPUT_XLSX), data_only=True)
+    ws = wb.active
+    all_rows = list(ws.iter_rows(values_only=True))
+
+    # Parse header: row 0 is the total haplotypes count, row 1 is column headers
+    # Data starts at row index 2
+    header_total_haplotypes = all_rows[0][0] if len(all_rows) > 0 else "?"
+    header_row = all_rows[1] if len(all_rows) > 1 else []
+    raw_data_rows = all_rows[2:]  # data rows
+
+    print(f"\n📄 File: {INPUT_XLSX.name}")
+    print(f"   Total haplotypes in header: {header_total_haplotypes}")
+    print(f"   Columns (from header row 2): {[str(h) for h in header_row]}")
+    print(f"   Data rows: {len(raw_data_rows)}")
+    print()
+
+    # ── Stats counters ────────────────────────────────────────────────────
+    stats = {
+        "total_raw": len(raw_data_rows),
+        "corrected": 0,       # auto-corrected frameshift rows
+        "dropped": 0,         # hopeless rows dropped
+        "drb345_abs": 0,      # DRB345 = "Abs"
+        "slash_resolved": 0,  # rows with / in any HLA col
+        "drb3_gene": 0,
+        "drb4_gene": 0,
+        "drb5_gene": 0,
+        "drb1_in_drb345": 0, # DRB1 appearing in DRB345 (frameshift indicator)
+    }
 
     # ── Connect / create schema ───────────────────────────────────────────
     conn = sqlite3.connect(str(OUTPUT_DB))
     cur = conn.cursor()
     cur.execute("DROP TABLE IF EXISTS haplotypes;")
-    ddl = f"""
-    CREATE TABLE haplotypes (
-      {build_column_defs()}
-    );
-    """
-    cur.execute(ddl)
+    cur.execute(build_create_table_sql())
     conn.commit()
-
-    # ── Read & transform CSV ──────────────────────────────────────────────
-    with open(INPUT_CSV, "r") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    print(f"\n📄 Read {len(rows)} rows from {INPUT_CSV.name}")
-    print()
-
-    # ── Collect stats ─────────────────────────────────────────────────────
-    stats = {
-        "total": len(rows),
-        "slash_resolved": 0,
-        "drb3_gene": 0,
-        "drb4_gene": 0,
-        "drb5_gene": 0,
-        "drb1_in_drb345": 0,
-        "drb345_empty": 0,
-    }
-
-    # Build list of all population column names
-    all_pop_cols = []
-    for grp_name, *sub_cols in POP_GROUPS:
-        all_pop_cols.extend(sub_cols)
 
     insert_sql = build_insert_sql()
     batch = []
+    corrected_examples = []  # store first few corrected rows for display
 
-    for row in rows:
-        norm_loci = []
-        for locus in LOCUS_COLS:
-            raw = row.get(locus, "")
-            norm = normalize_allele(raw, locus)
-            norm_loci.append(norm)
+    for row_idx, row in enumerate(raw_data_rows):
+        # Ensure we have 36 values (pad with None)
+        row_values = list(row)[:36]
+        while len(row_values) < 36:
+            row_values.append(None)
 
-            # Track stats (first allele only)
-            if locus == "hla_drb345":
-                if "/" in raw:
-                    stats["slash_resolved"] += 1
-                first_allele = raw.split("/")[0].strip() if "/" in raw else raw.strip()
-                first_allele = re.sub(r"^HLA-", "", first_allele)
-                if first_allele.startswith("DRB3"):
-                    stats["drb3_gene"] += 1
-                elif first_allele.startswith("DRB4"):
-                    stats["drb4_gene"] += 1
-                elif first_allele.startswith("DRB5"):
-                    stats["drb5_gene"] += 1
-                elif first_allele.startswith("DRB1"):
-                    stats["drb1_in_drb345"] += 1
-                elif not first_allele or first_allele in ("-", "Abs"):
-                    stats["drb345_empty"] += 1
-            elif locus == "hla_dpb1" and "/" in raw:
+        # ── Step 1: Auto-correct frameshift ──────────────────────────────
+        corrected_row, was_corrected = auto_correct_row(row_values)
+        if was_corrected:
+            stats["corrected"] += 1
+            if len(corrected_examples) < 3:
+                corrected_examples.append({
+                    "raw": row_values[:9],
+                    "fixed": corrected_row[:9],
+                })
+            row_values = corrected_row
+
+        # ── Step 2: Normalise HLA columns ────────────────────────────────
+        hla_values = []
+        for col_idx, db_name in HLA_COL_MAP:
+            raw_val = row_values[col_idx]
+            norm = normalize_allele(raw_val, db_name)
+            hla_values.append(norm)
+
+        # ── Step 3: Validate — drop hopeless rows ────────────────────────
+        # A row is hopeless if:
+        #   - hla_a is empty/invalid
+        #   - None of the first 3 loci (A, C, B) have a valid allele
+        valid_loci = sum(1 for v in hla_values[:3] if v and "*" in v)
+        if valid_loci == 0:
+            stats["dropped"] += 1
+            continue
+
+        # ── Step 4: Extract population data ──────────────────────────────
+        pop_values = []
+        for fq_col, n_col, rk_col, db_prefix, _ in POP_COL_MAP:
+            fq = safe_float(row_values[fq_col])
+            n  = safe_int(row_values[n_col])
+            rk = safe_int(row_values[rk_col])
+            pop_values.extend([fq, n, rk])
+
+        # ── Step 5: Collect stats ────────────────────────────────────────
+        # Count "Abs" in DRB345
+        raw_drb345 = str(row_values[3]).strip() if row_values[3] else ""
+        if raw_drb345 in ("Abs", "abs", "-"):
+            stats["drb345_abs"] += 1
+
+        # Slash detection across all 9 HLA cols
+        for col_idx, _ in HLA_COL_MAP:
+            raw = str(row_values[col_idx] or "")
+            if "/" in raw:
                 stats["slash_resolved"] += 1
 
-        # Population data
-        pop_vals = []
-        for col in all_pop_cols:
-            raw_val = row.get(col, "")
-            if col.endswith("_freq"):
-                pop_vals.append(safe_float(raw_val))
-            else:  # _count or _rank
-                pop_vals.append(safe_int(raw_val))
+        # DRB subtyping
+        drb345_norm = hla_values[3]
+        if drb345_norm.startswith("DRB3"):
+            stats["drb3_gene"] += 1
+        elif drb345_norm.startswith("DRB4"):
+            stats["drb4_gene"] += 1
+        elif drb345_norm.startswith("DRB5"):
+            stats["drb5_gene"] += 1
+        elif drb345_norm.startswith("DRB1"):
+            stats["drb1_in_drb345"] += 1
 
-        batch.append(tuple(norm_loci + pop_vals))
+        # ── Assemble row ─────────────────────────────────────────────────
+        batch.append(tuple(hla_values + pop_values))
 
     # ── Bulk insert ────────────────────────────────────────────────────────
     cur.executemany(insert_sql, batch)
@@ -358,28 +397,44 @@ def run():
     print(f"\n{'=' * 72}")
     print(f"✅ NORMALISATION COMPLETE")
     print(f"{'=' * 72}")
-    print(f"  Database:   {OUTPUT_DB}")
-    print(f"  Rows:       {row_count}")
-    print(f"  Columns:    {len(LOCUS_COLS) + len(all_pop_cols)}")
+    print(f"  Database:    {OUTPUT_DB}")
+    print(f"  Rows:        {row_count}")
+    print(f"  Columns:     {len(HLA_DB_COLS) + len(POP_DB_COLS)} ({len(HLA_DB_COLS)} HLA + {len(POP_DB_COLS)} pop)")
     print()
-    print("Table columns:")
-    print(f"  Locus columns: {', '.join(LOCUS_COLS)}")
-    print(f"  Population groups: {len(POP_GROUPS)} populations × 5 metrics each")
-    for grp_name, *sub_cols in POP_GROUPS:
-        print(f"    {grp_name:15s} → {', '.join(sub_cols)}")
+    print("HLA columns:")
+    for _, name in HLA_COL_MAP:
+        print(f"    → {name}")
+    print()
+    print("Population columns:")
+    for _, _, _, db_prefix, display in POP_COL_MAP:
+        print(f"    {display:15s} → {db_prefix}_hap_freq, {db_prefix}_hap_count, {db_prefix}_hap_rank")
     print()
     print("Normalisation stats:")
+    print(f"  Rows read from xlsx:       {stats['total_raw']}")
+    print(f"  Auto-corrected (frameshift): {stats['corrected']}")
+    print(f"  Dropped (hopeless):        {stats['dropped']}")
     print(f"  Slash-ambiguous resolved:  {stats['slash_resolved']}")
     print(f"  DRB3 gene entries:         {stats['drb3_gene']}")
     print(f"  DRB4 gene entries:         {stats['drb4_gene']}")
     print(f"  DRB5 gene entries:         {stats['drb5_gene']}")
     print(f"  DRB1 in DRB345 column:     {stats['drb1_in_drb345']}")
-    if stats["drb345_empty"] > 0:
-        print(f"  DRB345 empty/absent:       {stats['drb345_empty']}")
-    print()
+    print(f"  DRB345 = 'Abs':            {stats['drb345_abs']}")
+
+    # ── Show auto-corrected example rows ─────────────────────────────────
+    if corrected_examples:
+        print(f"\n📌 Auto-corrected rows (showing {len(corrected_examples)} examples):")
+        for idx, ex in enumerate(corrected_examples):
+            raw_vals = ex["raw"]
+            fixed_vals = ex["fixed"]
+            print(f"\n  Example {idx + 1} (BEFORE → AFTER):")
+            for i, (_, name) in enumerate(HLA_COL_MAP):
+                arrow = " → " if raw_vals[i] != fixed_vals[i] else "   "
+                print(f"    {name:15s} {str(raw_vals[i]):30s}{arrow}{str(fixed_vals[i]):30s}")
+    else:
+        print("\n  (No auto-corrections needed — all rows clean.)")
 
     # ── Verify sample rows ────────────────────────────────────────────────
-    print("Sample of 3 normalised rows:")
+    print("\n📌 Sample of 3 normalised rows:")
     cur.execute("""
         SELECT hla_a, hla_c, hla_b, hla_drb345, hla_drb1,
                hla_dqa1, hla_dqb1, hla_dpa1, hla_dpb1,
@@ -391,19 +446,20 @@ def run():
         print(f"  A={r[0]:8s} C={r[1]:8s} B={r[2]:8s} DRB345={r[3]:10s} "
               f"DRB1={r[4]:10s} DQA1={r[5]:8s} DQB1={r[6]:8s} "
               f"DPA1={r[7]:8s} DPB1={r[8]:8s} | "
-              f"Global_freq={r[9]:.6e} Global_n={r[10]}")
+              f"Global_freq={r[9]} Global_n={r[10]}")
 
     # ── Integrity checks ──────────────────────────────────────────────────
-    print("\nIntegrity checks:")
+    print("\n📌 Integrity checks:")
     issues = 0
-    for col in LOCUS_COLS:
-        cur.execute(f'SELECT COUNT(*) FROM haplotypes WHERE "{col}" LIKE "%:%:%"')
+
+    for _, name in HLA_COL_MAP:
+        cur.execute(f'SELECT COUNT(*) FROM haplotypes WHERE "{name}" LIKE "%:%:%"')
         bad = cur.fetchone()[0]
         if bad > 0:
-            print(f"  ⚠️  {col}: {bad} rows with >2 fields!")
+            print(f"  ⚠️  {name}: {bad} rows with >2 fields!")
             issues += 1
         else:
-            print(f"  ✅ {col}: all 2-field")
+            print(f"  ✅ {name}: all 2-field")
 
     cur.execute("SELECT COUNT(*) FROM haplotypes WHERE hla_a LIKE 'HLA-%' OR hla_c LIKE 'HLA-%' OR hla_b LIKE 'HLA-%'")
     if cur.fetchone()[0] == 0:
@@ -413,10 +469,16 @@ def run():
     if cur.fetchone()[0] == 0:
         print("  ✅ No stray '/' in normalised data")
 
+    # Verify DRB345 is clean
+    cur.execute("SELECT COUNT(*) FROM haplotypes WHERE hla_drb345 = '' OR hla_drb345 IS NULL")
+    empty_count = cur.fetchone()[0]
+    print(f"  ✅ DRB345 empty/null count: {empty_count} (expected: {stats['drb345_abs']})")
+
     if issues == 0:
         print("\n  🎉 All loci clean at 2-field resolution.")
 
     conn.close()
+    print()
 
 
 if __name__ == "__main__":
