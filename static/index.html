@@ -542,6 +542,8 @@ function fmtFreq(val) {
 
 // ── Build payload from inputs ────────────────────────────────────
 
+const NULL_ALLELE_LOCUS = "hla_drb345"; // locus where a null allele is biologically possible
+
 function buildPayload() {
   const loci = [
     "hla_a", "hla_c", "hla_b",
@@ -563,11 +565,15 @@ function buildPayload() {
     // If both empty, skip this locus entirely
     if (!a1 && !a2) continue;
 
-    // If only one is filled, use it for both (homozygous assumption)
+    // Single allele filled: send [allele, ""] to let the backend test
+    // both homozygous AND hemizygous/null scenarios.
+    // For DRB345 this is critical — a null allele is biologically valid.
+    // For other loci the empty second allele allows the backend to match
+    // haplotypes where the second copy is untyped or ambiguous.
     if (a1 && !a2) {
-      payload[locus] = [a1];
+      payload[locus] = [a1, ""];
     } else if (!a1 && a2) {
-      payload[locus] = [a2];
+      payload[locus] = [a2, ""];
     } else {
       payload[locus] = [a1, a2];
     }

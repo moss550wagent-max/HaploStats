@@ -35,6 +35,14 @@ LOCUS_LABELS = [
 
 LOCUS_LABEL_MAP = dict(zip(LOCI, LOCUS_LABELS))
 
+# Tilde-format display order (genomic order: DRB1 before DRB345)
+LOCI_TILDE = [
+    "hla_a", "hla_c", "hla_b",
+    "hla_drb1",
+    "hla_drb345",
+    "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1",
+]
+
 # ── Population Frequency Column Map (new normalized DB) ──────────
 # Maps display name → SQL column (hap_freq) → display label
 POPULATION_COLUMNS = {
@@ -321,15 +329,18 @@ class HaploMath:
         }
 
     def _make_label(self, hap: dict) -> str:
-        """Build a concise haplotype label."""
+        """
+        Build a single-line haplotype label in tilde-separated format.
+        Example:  A*01:01 ~ C*07:01 ~ B*08:01 ~ DRB1*03:01 ~ DRB3*01:01
+                         ~ DQA1*05:01 ~ DQB1*02:01 ~ DPA1*01:03 ~ DPB1*04:01
+        Empty loci are omitted from the string entirely.
+        """
         parts = []
-        for loc, lbl in zip(LOCI, LOCUS_LABELS):
+        for loc in LOCI_TILDE:
             val = hap.get(loc, "")
             if val:
-                parts.append(f"{lbl}={val}")
-            else:
-                parts.append(f"{lbl}=?")
-        return " | ".join(parts)
+                parts.append(val)
+        return " ~ ".join(parts)
 
 
 # ── Main (test) ─────────────────────────────────────────────────────
@@ -370,8 +381,8 @@ if __name__ == "__main__":
 
     for p in result["pairs"][:5]:
         print(f"  #{p['rank']} posterior={p['posterior']:.6f} cum={p['cumulative']:.6f}")
-        print(f"     H1: {p['haplotype_1'][:80]}")
-        print(f"     H2: {p['haplotype_2'][:80]}")
+        print(f"     H1: {p['haplotype_1']}")
+        print(f"     H2: {p['haplotype_2']}")
         pf = p["population_frequencies"]
         parts = " | ".join(f"{k}={v:.2e}" for k, v in pf.items() if v > 0)
         print(f"     💠 {parts}")
@@ -423,11 +434,11 @@ if __name__ == "__main__":
     print()
 
     for p in result2['pairs'][:5]:
-        drb345_h1 = "⚠️" if "DRB345=?" in p['haplotype_1'] else "  "
-        drb345_h2 = "⚠️" if "DRB345=?" in p['haplotype_2'] else "  "
+        drb345_h1 = " ⍰" if not any(a in p['haplotype_1'] for a in ['DRB3*','DRB4*','DRB5*']) else "  "
+        drb345_h2 = " ⍰" if not any(a in p['haplotype_2'] for a in ['DRB3*','DRB4*','DRB5*']) else "  "
         print(f"  #{p['rank']} posterior={p['posterior']:.6f} hom={p['is_homozygous']}")
-        print(f"     H1{drb345_h1} {p['haplotype_1'][:90]}")
-        print(f"     H2{drb345_h2} {p['haplotype_2'][:90]}")
+        print(f"     H1{drb345_h1} {p['haplotype_1']}")
+        print(f"     H2{drb345_h2} {p['haplotype_2']}")
         print()
 
     engine2.close()
