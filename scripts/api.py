@@ -133,6 +133,7 @@ class ImputedPair(BaseModel):
     haplotype_2: str = ""
     posterior: float = 0.0
     cumulative: float = 0.0
+    match_percentage: int = 0
     is_homozygous: bool = False
     population_frequencies: PopulationFrequencies = PopulationFrequencies()
 
@@ -231,6 +232,7 @@ def impute(request: ImputeRequest, population: str = "Global"):
             haplotype_2=p["haplotype_2"],
             posterior=p["posterior"],
             cumulative=p["cumulative"],
+            match_percentage=p.get("match_percentage", 0),
             is_homozygous=p["is_homozygous"],
             population_frequencies=PopulationFrequencies(
                 Global=pf.get("Global", 0.0),

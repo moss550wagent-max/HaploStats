@@ -312,8 +312,9 @@
     white-space: nowrap;
   }
   thead th:nth-child(1) { text-align: center; width: 44px; }
-  thead th:nth-child(2),
-  thead th:nth-child(3) { text-align: left; }
+  thead th:nth-child(2) { text-align: center; width: 64px; }
+  thead th:nth-child(3),
+  thead th:nth-child(4) { text-align: left; }
 
   tbody td {
     padding: 9px 12px;
@@ -323,8 +324,9 @@
     font-variant-numeric: tabular-nums;
   }
   tbody td:nth-child(1) { text-align: center; color: var(--text-muted); font-weight: 600; font-size: 11px; }
-  tbody td:nth-child(2),
-  tbody td:nth-child(3) { text-align: left; font-size: 11px; color: var(--text); font-weight: 500; }
+  tbody td:nth-child(2) { text-align: center; font-size: 12px; }
+  tbody td:nth-child(3),
+  tbody td:nth-child(4) { text-align: left; font-size: 11px; color: var(--text); font-weight: 500; }
   .haplotype-cell { font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace; word-break: break-all; white-space: normal; line-height: 1.55; padding: 2px 4px; border-radius: 3px; background: #f8f9fa; display: inline-block; max-width: 340px; }
   .copy-btn { cursor: pointer; background: none; border: none; padding: 2px 6px; margin-left: 4px; font-size: 12px; vertical-align: middle; border-radius: 3px; transition: background 0.15s, transform 0.1s; line-height: 1; }
   .copy-btn:hover { background: var(--border); transform: scale(1.12); }
@@ -339,6 +341,12 @@
   .freq-mid   { color: var(--amber); }
   .freq-high  { color: var(--green); }
   .freq-top   { color: var(--accent); font-weight: 600; }
+
+  /* ── Match % column (fuzzy tolerance scoring) ─────────────── */
+  .match-pct   { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .match-exact { color: var(--green); }   /* 100%  → green  */
+  .match-good  { color: var(--amber); }   /* 80-99 → yellow/orange */
+  .match-poor  { color: var(--red); }     /* <80   → red    */
 
   .results-count {
     margin-top: 12px;
@@ -361,8 +369,8 @@
     .allele-grid input { font-size: 12px; padding: 7px 8px; }
     .locus-row > div { padding: 5px 8px; }
     thead th, tbody td { padding: 7px 8px; font-size: 11px; }
-    tbody td:nth-child(2),
-    tbody td:nth-child(3) { max-width: 120px; }
+    tbody td:nth-child(3),
+    tbody td:nth-child(4) { max-width: 120px; }
   }
 </style>
 </head>
@@ -477,6 +485,7 @@
       <thead>
         <tr>
           <th>Rank</th>
+          <th>Match %</th>
           <th>Haplotype 1 <span style="font-size:10px;font-weight:400;color:var(--text-muted);">(click 📋)</span></th>
           <th>Haplotype 2 <span style="font-size:10px;font-weight:400;color:var(--text-muted);">(click 📋)</span></th>
           <th class="freq-col">Global</th>
@@ -522,6 +531,14 @@ function formatAllele(raw, locus) {
   }
   const prefix = LOCUS_PREFIX[locus];
   return prefix ? prefix + "*" + val : val;
+}
+
+// ── Match % color coding (fuzzy tolerance scoring) ──────────────
+
+function matchClass(pct) {
+  if (pct >= 100) return "match-exact";  // green
+  if (pct >= 80)  return "match-good";   // yellow/orange
+  return "match-poor";                   // red
 }
 
 // ── Frequency cell formatting ────────────────────────────────────
@@ -637,14 +654,16 @@ async function calculate() {
     const pairs = data.imputed_pairs || [];
     if (pairs.length === 0) {
       tbody.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;padding:36px;color:var(--text-muted);">No matching haplotype pairs found.</td></tr>';
+        '<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">No matching haplotype pairs found.</td></tr>';
       resultsCount.textContent = "";
     } else {
       let html = "";
       for (const p of pairs) {
         const pf = p.population_frequencies || {};
+        const mp = p.match_percentage !== undefined && p.match_percentage !== null ? p.match_percentage : 0;
         html += `<tr>
           <td>${p.rank}</td>
+          <td><span class="match-pct ${matchClass(mp)}">${mp}%</span></td>
           <td><span class="haplotype-cell">${esc(p.haplotype_1)}</span><button class="copy-btn" onclick="copyHaplotype('${escAttr(p.haplotype_1)}',this)" title="Copy haplotype">📋</button></td>
           <td><span class="haplotype-cell">${esc(p.haplotype_2)}</span><button class="copy-btn" onclick="copyHaplotype('${escAttr(p.haplotype_2)}',this)" title="Copy haplotype">📋</button></td>
           <td>${fmtFreq(pf.Global)}</td>

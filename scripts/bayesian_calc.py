@@ -43,6 +43,23 @@ LOCI_TILDE = [
     "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1",
 ]
 
+# ── Fuzzy Match / Tolerance Scoring ──────────────────────────────
+#
+# The reference DB (2026 rows) is too small to guarantee a 100% exact
+# 9-locus match for every new patient. Instead of discarding rows when a
+# flexible locus misses, we apply heuristic tolerance scoring:
+#
+#   GATEKEEPER loci (A, C, B, DRB345): exact match REQUIRED.
+#     Rows failing any gatekeeper are discarded outright.
+#   FLEXIBLE loci (DRB1, DQA1, DQB1, DPA1, DPB1): scored 0-20 each
+#     on a 100-point scale and summed into a `match_percentage`.
+#
+GATEKEEPER_LOCI = ["hla_a", "hla_c", "hla_b", "hla_drb345"]
+FLEXIBLE_LOCI = ["hla_drb1", "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1"]
+
+POINTS_PER_LOCUS = 20      # exact match  (05:01 == 05:01)
+ALLELE_GROUP_POINTS = 16   # group match  (05:01 vs 05:02)
+
 # ── Population Frequency Column Map (new normalized DB) ──────────
 # Maps display name → SQL column (hap_freq) → display label
 POPULATION_COLUMNS = {
@@ -116,6 +133,71 @@ def sanitize_allele(raw: str, locus: str) -> str:
         if prefix:
             return f"{prefix}*{val}"
         return val
+
+
+# ── Fuzzy Match Scoring Utilities ──────────────────────────────────
+
+def _match_score(patient_allele: str, db_allele: str) -> int:
+    """
+    Score one patient allele against one database allele (2-field strings).
+
+    Exact match        (05:01 == 05:01): 20 points
+    Allele group match (05:01 vs 05:02): 16 points  (field 1 equal)
+    Total mismatch     (field 1 differs, or either side blank): 0
+    """
+    pa = (patient_allele or "").strip().upper()
+    da = (db_allele or "").strip().upper()
+    if not pa or not da:
+        return 0
+    if pa == da:
+        return POINTS_PER_LOCUS
+    pf = [f for f in pa.split(":") if f]
+    df = [f for f in da.split(":") if f]
+    if pf and df and pf[0] == df[0]:
+        return ALLELE_GROUP_POINTS
+    return 0
+
+
+def _locus_pair_score(patient_alleles: list, h1_allele: str,
+                      h2_allele: str) -> float:
+    """
+    Score one flexible locus (0-20) for a candidate haplotype pair.
+
+    Each patient allele receives its best score against either haplotype
+    allele (H1 or H2). Blank patient alleles are untyped wildcards and
+    score full points — an untyped allele must not penalize the pair.
+    """
+    if not patient_alleles:
+        return 0.0
+    scores = []
+    for pa in patient_alleles:
+        if not pa:
+            scores.append(float(POINTS_PER_LOCUS))
+        else:
+            scores.append(float(max(
+                _match_score(pa, h1_allele),
+                _match_score(pa, h2_allele),
+            )))
+    return sum(scores) / len(scores)
+
+
+def _compute_match_percentage(genotype: dict, h1: dict, h2: dict) -> int:
+    """
+    Heuristic tolerance score (0-100) over the 5 flexible loci
+    (DRB1, DQA1, DQB1, DPA1, DPB1) for a candidate haplotype pair.
+
+    Untyped flexible loci are not scored — they get full credit so a
+    partially-typed patient can still reach 100% on what they provided.
+    """
+    total = 0.0
+    for loc in FLEXIBLE_LOCI:
+        if loc not in genotype:
+            total += POINTS_PER_LOCUS
+        else:
+            total += _locus_pair_score(
+                genotype[loc], h1.get(loc, ""), h2.get(loc, "")
+            )
+    return int(round(total))
 
 
 # ── Hardy-Weinberg ─────────────────────────────────────────────────
@@ -204,13 +286,16 @@ class HaploMath:
         dict with keys: patient_genotype, population, total_possible_pairs,
                         entropy, populations_available, pairs[]
         """
-        constrained_loci = [loc for loc in LOCI if loc in genotype]
+        # Gatekeeper loci (A, C, B, DRB345) — exact match REQUIRED.
+        # Flexible loci (DRB1, DQA1, DQB1, DPA1, DPB1) are scored later
+        # via tolerance scoring and do NOT gate candidate selection.
+        gatekeeper_loci = [loc for loc in GATEKEEPER_LOCI if loc in genotype]
 
-        # Step 1: Filter haplotypes to those matching every constrained locus
+        # Step 1: Filter haplotypes to those matching every gatekeeper locus
         candidates = []
         for hap in self._all_haplotypes:
             ok = True
-            for loc in constrained_loci:
+            for loc in gatekeeper_loci:
                 a1 = genotype[loc][0]
                 a2 = genotype[loc][1] if len(genotype[loc]) > 1 else a1
                 if a1 and not self._haplotype_matches(hap, [a1, a2], loc):
@@ -229,9 +314,10 @@ class HaploMath:
             for j in range(i, n_cand):
                 h2 = candidates[j]
 
-                # Verify the pair covers both alleles at each constrained locus
+                # Verify the pair covers both alleles at each GATEKEEPER locus.
+                # Flexible loci are NOT verified — they are tolerance-scored.
                 valid = True
-                for loc in constrained_loci:
+                for loc in gatekeeper_loci:
                     a1, a2 = genotype[loc][0], genotype[loc][1] if len(genotype[loc]) > 1 else genotype[loc][0]
                     h1v = h1.get(loc, "")
                     h2v = h2.get(loc, "")
@@ -269,10 +355,14 @@ class HaploMath:
                 h1_label = self._make_label(h1)
                 h2_label = self._make_label(h2)
 
+                # Heuristic tolerance score over the 5 flexible loci (0-100)
+                match_pct = _compute_match_percentage(genotype, h1, h2)
+
                 pairs_raw.append({
                     "haplotype_1": h1_label,
                     "haplotype_2": h2_label,
                     "joint_prob": primary_joint,
+                    "match_percentage": match_pct,
                     "is_homozygous": is_hom,
                     "population_frequencies": pop_freqs,
                     "h1_id": i,
@@ -295,7 +385,10 @@ class HaploMath:
         for p in pairs_raw:
             p["posterior"] = round(p["joint_prob"] / total, 10)
 
-        pairs_raw.sort(key=lambda x: x["posterior"], reverse=True)
+        # Sort: match_percentage (descending) FIRST, then population
+        # frequency (descending) as the tie-breaker.
+        pairs_raw.sort(key=lambda x: (x["match_percentage"], x["joint_prob"]),
+                       reverse=True)
 
         # Step 5: Rank
         ranked = []
@@ -308,6 +401,7 @@ class HaploMath:
                 "haplotype_2": p["haplotype_2"],
                 "posterior": p["posterior"],
                 "cumulative": round(cumulative, 10),
+                "match_percentage": p["match_percentage"],
                 "is_homozygous": p["is_homozygous"],
                 "population_frequencies": p["population_frequencies"],
             })
@@ -380,7 +474,8 @@ if __name__ == "__main__":
     print()
 
     for p in result["pairs"][:5]:
-        print(f"  #{p['rank']} posterior={p['posterior']:.6f} cum={p['cumulative']:.6f}")
+        print(f"  #{p['rank']} posterior={p['posterior']:.6f} cum={p['cumulative']:.6f} "
+              f"match={p['match_percentage']}%")
         print(f"     H1: {p['haplotype_1']}")
         print(f"     H2: {p['haplotype_2']}")
         pf = p["population_frequencies"]
@@ -436,10 +531,56 @@ if __name__ == "__main__":
     for p in result2['pairs'][:5]:
         drb345_h1 = " ⍰" if not any(a in p['haplotype_1'] for a in ['DRB3*','DRB4*','DRB5*']) else "  "
         drb345_h2 = " ⍰" if not any(a in p['haplotype_2'] for a in ['DRB3*','DRB4*','DRB5*']) else "  "
-        print(f"  #{p['rank']} posterior={p['posterior']:.6f} hom={p['is_homozygous']}")
+        print(f"  #{p['rank']} posterior={p['posterior']:.6f} hom={p['is_homozygous']} "
+              f"match={p['match_percentage']}%")
         print(f"     H1{drb345_h1} {p['haplotype_1']}")
         print(f"     H2{drb345_h2} {p['haplotype_2']}")
         print()
 
     engine2.close()
-    print("✅ Bayesian engine ready (both tests passed).")
+
+    # ── Test 3: Fuzzy Tolerance Scoring ──────────────────────────────
+    # Same patient as Test 2 but DQB1 allele 2 typed as 05:02 instead of
+    # 05:01 — an ALLELE GROUP mismatch (field 1 matches, field 2 differs).
+    # The engine must still return pairs, ranked by match % (100% first,
+    # then 96% group matches, then lower).
+    print("\n" + "=" * 72)
+    print("  FUZZY TEST — Allele-group mismatch at DQB1 (05:02 vs 05:01)")
+    print("=" * 72)
+
+    engine3 = HaploMath(population="Global")
+    engine3.connect()
+
+    fuzzy_patient = dict(hemizygous_patient)
+    fuzzy_patient["hla_dqb1"] = ["DQB1*02:01", "DQB1*05:02"]  # group mismatch
+
+    print("\n📋 Fuzzy Patient Genotype (DQB1 allele 2 = 05:02):")
+    for loc, alleles in fuzzy_patient.items():
+        tag = " (empty)" if not alleles[1] else (" (hom)" if alleles[0] == alleles[1] else "")
+        print(f"  {loc:15} {alleles[0]:15} / {alleles[1]}{tag}")
+
+    result3 = engine3.calculate_posterior(fuzzy_patient)
+
+    print(f"\n📊 Results (ranked by match % → {result3['population']} freq):")
+    print(f"   Candidate haplotypes: {result3.get('total_candidate_haplotypes', 'N/A')}")
+    print(f"   Possible pairs:       {result3['total_possible_pairs']}")
+    print(f"   Entropy:              {result3.get('entropy', 0)} bits")
+    print()
+
+    pcts = sorted({p['match_percentage'] for p in result3['pairs']}, reverse=True)
+    print(f"  Match % values present: {pcts}")
+
+    # Verify strict sort: match % non-increasing down the ranking
+    mp_list = [p['match_percentage'] for p in result3['pairs']]
+    assert all(mp_list[i] >= mp_list[i+1] for i in range(len(mp_list)-1)), \
+        "Sort violation: match_percentage not descending"
+    print("  ✅ Sort verified: match_percentage strictly non-increasing")
+
+    for p in result3['pairs'][:6]:
+        print(f"  #{p['rank']} posterior={p['posterior']:.6f} match={p['match_percentage']}%")
+        print(f"     H1: {p['haplotype_1']}")
+        print(f"     H2: {p['haplotype_2']}")
+        print()
+
+    engine3.close()
+    print("✅ Bayesian engine ready (exact + hemizygous + fuzzy tests passed).")
