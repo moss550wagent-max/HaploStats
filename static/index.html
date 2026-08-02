@@ -406,6 +406,15 @@
   .match-good  { color: var(--amber); }   /* 80-99 → yellow/orange */
   .match-poor  { color: var(--red); }     /* <80   → red    */
 
+  /* ── Testing Mode: matched allele highlighting ────────────── */
+  .match-allele {
+    color: #28a745;
+    font-weight: 700;
+    background: rgba(40, 167, 69, 0.08);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+
   .results-count {
     margin-top: 12px;
     font-size: 11px;
@@ -604,6 +613,61 @@ function matchClass(pct) {
   return "match-poor";                   // red
 }
 
+// ── Testing Mode: matched-allele highlighting ───────────────────
+
+// Maps an allele's gene prefix (before "*") to its payload locus key.
+// Locus-aware matching prevents false positives (e.g. a patient's
+// A*01:01 must never highlight a B*01:01 just because the group is 01).
+const GENE_PREFIX_TO_LOCUS = {
+  "A":    "hla_a",
+  "C":    "hla_c",
+  "B":    "hla_b",
+  "DRB3": "hla_drb345",
+  "DRB4": "hla_drb345",
+  "DRB5": "hla_drb345",
+  "DRB1": "hla_drb1",
+  "DQA1": "hla_dqa1",
+  "DQB1": "hla_dqb1",
+  "DPA1": "hla_dpa1",
+  "DPB1": "hla_dpb1",
+};
+
+function locusOfAllele(allele) {
+  const gene = String(allele || "").split("*")[0];
+  return GENE_PREFIX_TO_LOCUS[gene] || null;
+}
+
+// True when a haplotype allele matches any of the user's typed alleles
+// at the same locus — either perfectly or via allele group (field 1).
+function alleleMatchesInput(userAlleles, hapAllele) {
+  if (!Array.isArray(userAlleles) || userAlleles.length === 0) return false;
+  const h = String(hapAllele || "");
+  for (const ua of userAlleles) {
+    if (!ua) continue;
+    const u = String(ua);
+    if (u.toUpperCase() === h.toUpperCase()) return true;          // perfect
+    const uf = u.split(":");
+    const hf = h.split(":");
+    if (uf.length && hf.length && uf[0].toUpperCase() === hf[0].toUpperCase()) {
+      return true;                                                 // allele group
+    }
+  }
+  return false;
+}
+
+// Wrap matched alleles in a green <span>; leave non-matches untouched.
+function highlightHaplotype(hapString, inputByLocus) {
+  if (!hapString) return "";
+  return hapString.split(" ~ ").map((allele) => {
+    const locus = locusOfAllele(allele);
+    const userAlleles = locus ? inputByLocus[locus] : null;
+    const safe = esc(allele);
+    return locus && alleleMatchesInput(userAlleles, allele)
+      ? `<span class="match-allele">${safe}</span>`
+      : safe;
+  }).join(" ~ ");
+}
+
 // ── Frequency cell formatting ────────────────────────────────────
 
 function fmtFreq(val) {
@@ -689,6 +753,14 @@ async function calculate() {
   // Testing Mode (Lenient Match) — default OFF, persists for the session
   payload.testing_mode = document.getElementById("testingMode").checked;
 
+  // Allele lookup table for Testing Mode highlighting: locus → typed alleles
+  // (blank second alleles from single-allele entries are dropped).
+  const inputByLocus = {};
+  for (const locus of Object.keys(payload)) {
+    if (locus === "testing_mode") continue;
+    inputByLocus[locus] = (payload[locus] || []).filter(Boolean);
+  }
+
   // Button loading
   const originalText = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span> Calculating…';
@@ -729,15 +801,19 @@ async function calculate() {
         `<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
       resultsCount.textContent = "";
     } else {
+      const highlightOn = !!data.testing_mode;
       let html = "";
       for (const p of pairs) {
         const pf = p.population_frequencies || {};
         const mp = p.match_percentage !== undefined && p.match_percentage !== null ? p.match_percentage : 0;
+        // Testing Mode: wrap matched alleles in green; otherwise plain text.
+        const h1Html = highlightOn ? highlightHaplotype(p.haplotype_1, inputByLocus) : esc(p.haplotype_1);
+        const h2Html = highlightOn ? highlightHaplotype(p.haplotype_2, inputByLocus) : esc(p.haplotype_2);
         html += `<tr>
           <td>${p.rank}</td>
           <td><span class="match-pct ${matchClass(mp)}">${mp}%</span></td>
-          <td><span class="haplotype-cell">${esc(p.haplotype_1)}</span><button class="copy-btn" onclick="copyHaplotype('${escAttr(p.haplotype_1)}',this)" title="Copy haplotype">📋</button></td>
-          <td><span class="haplotype-cell">${esc(p.haplotype_2)}</span><button class="copy-btn" onclick="copyHaplotype('${escAttr(p.haplotype_2)}',this)" title="Copy haplotype">📋</button></td>
+          <td><span class="haplotype-cell">${h1Html}</span><button class="copy-btn" onclick="copyHaplotypeFromCell(this)" title="Copy haplotype">📋</button></td>
+          <td><span class="haplotype-cell">${h2Html}</span><button class="copy-btn" onclick="copyHaplotypeFromCell(this)" title="Copy haplotype">📋</button></td>
           <td>${fmtFreq(pf.Global)}</td>
           <td>${fmtFreq(pf.AFA)}</td>
           <td>${fmtFreq(pf.ASI)}</td>
@@ -746,8 +822,12 @@ async function calculate() {
         </tr>`;
       }
       tbody.innerHTML = html;
+      const legend = highlightOn
+        ? ' · <span style="color:#28a745;font-weight:700;">green</span> alleles matched your input'
+        : "";
       resultsCount.textContent =
         `Showing ${pairs.length} of ${total} total pairs`;
+      resultsCount.innerHTML = resultsCount.textContent + legend;
     }
 
     resultsArea.classList.add("visible");
@@ -764,10 +844,6 @@ async function calculate() {
 
 // ── Utilities ─────────────────────────────────────────────────────
 
-function escAttr(str) {
-  if (!str) return "";
-  return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
 function esc(str) {
   if (!str) return "";
   const d = document.createElement("div");
@@ -790,6 +866,15 @@ async function copyHaplotype(text, btn) {
     btn.textContent = "⚠️";
     setTimeout(() => { btn.textContent = "📋"; }, 1500);
   }
+}
+
+// Copy from the rendered haplotype cell: reading `innerText` ignores the
+// highlight <span> wrappers, so the clinician always copies the clean raw
+// haplotype string (e.g. "A*01:01 ~ C*07:01 …"), never HTML or tag noise.
+function copyHaplotypeFromCell(btn) {
+  const cell = btn.closest("td").querySelector(".haplotype-cell");
+  const text = cell ? cell.innerText : "";
+  return copyHaplotype(text, btn);
 }
 
 // ── Enter key to submit ──────────────────────────────────────────
