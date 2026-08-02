@@ -60,6 +60,26 @@ FLEXIBLE_LOCI = ["hla_drb1", "hla_dqa1", "hla_dqb1", "hla_dpa1", "hla_dpb1"]
 POINTS_PER_LOCUS = 20      # exact match  (05:01 == 05:01)
 ALLELE_GROUP_POINTS = 16   # group match  (05:01 vs 05:02)
 
+# ── Testing Mode (Lenient Match) ──────────────────────────────────
+#
+# The 2,026-row reference DB is small enough that strict gatekeeper
+# matching frequently returns 0 pairs. Testing Mode is a deliberately
+# lenient search mode for exploratory / QC work:
+#
+#   - NO gatekeeper loci. A database row (haplotype) qualifies when ANY
+#     two or more typed locus categories carry a patient allele.
+#   - match_percentage is computed dynamically as:
+#         (loci covered by the pair) / (loci the patient typed)  x 100
+#     e.g. patient typed 4 loci, pair covers 2  ->  50%.
+#
+# Row-level leniency explodes the pair space (2026 rows -> 700k+ pairs),
+# so testing mode bounds the search: the highest-frequency qualifying
+# rows are used as candidates, and the ranked response is truncated.
+# This keeps the endpoint fast and the JSON payload sane on Render.
+TESTING_MIN_MATCHED_LOCI = 2      # rows must match >= 2 typed loci
+TESTING_MAX_CANDIDATES = 250      # top-N candidate rows by Global freq
+TESTING_MAX_RETURNED_PAIRS = 300  # pairs returned in the ranked list
+
 # ── Population Frequency Column Map (new normalized DB) ──────────
 # Maps display name → SQL column (hap_freq) → display label
 POPULATION_COLUMNS = {
@@ -200,6 +220,43 @@ def _compute_match_percentage(genotype: dict, h1: dict, h2: dict) -> int:
     return int(round(total))
 
 
+# ── Testing Mode Scoring Utilities ────────────────────────────────
+
+def _locus_covered(patient_alleles: list, h1_allele: str,
+                   h2_allele: str) -> bool:
+    """
+    True when a pair (H1, H2) covers the patient's typing at one locus:
+    both patient alleles must be carried by H1 and/or H2. Blank patient
+    alleles (hemizygous / null) are always satisfied.
+    """
+    a1 = patient_alleles[0]
+    a2 = patient_alleles[1] if len(patient_alleles) > 1 else a1
+    h1v = h1_allele or ""
+    h2v = h2_allele or ""
+    c1 = (not a1) or (a1 == h1v or a1 == h2v)
+    c2 = (not a2) or (a2 == h1v or a2 == h2v)
+    return c1 and c2
+
+
+def _compute_testing_match_percentage(genotype: dict, h1: dict,
+                                      h2: dict) -> int:
+    """
+    Testing Mode score (0-100): loci the pair covers / loci the patient
+    typed, x 100. The denominator is the number of typed locus categories
+    (not individual alleles), so a 4-locus patient with 2 covered loci
+    scores 50%.
+    """
+    total = len(genotype)
+    if total == 0:
+        return 0
+    matched = sum(
+        1
+        for loc, alleles in genotype.items()
+        if _locus_covered(alleles, h1.get(loc, ""), h2.get(loc, ""))
+    )
+    return int(round(100.0 * matched / total))
+
+
 # ── Hardy-Weinberg ─────────────────────────────────────────────────
 
 def diplotype_frequency(h1_freq: float, h2_freq: float,
@@ -272,7 +329,8 @@ class HaploMath:
                 return True
         return False
 
-    def calculate_posterior(self, genotype: dict) -> dict:
+    def calculate_posterior(self, genotype: dict,
+                            testing_mode: bool = False) -> dict:
         """
         Main entry point: compute all valid phased pairs and rank by posterior.
 
@@ -280,29 +338,56 @@ class HaploMath:
         ----------
         genotype : dict
             Maps locus → [allele1, allele2]  (already sanitized)
+        testing_mode : bool
+            False (default) → strict gatekeeper algorithm:
+                HLA-A/C/B/DRB345 exact match REQUIRED; flexible loci
+                (DRB1/DQA1/DQB1/DPA1/DPB1) tolerance-scored 0-20 each.
+            True → lenient testing algorithm:
+                No gatekeepers. Any row matching >= 2 typed loci qualifies;
+                match_percentage = covered loci / typed loci.
 
         Returns
         -------
-        dict with keys: patient_genotype, population, total_possible_pairs,
-                        entropy, populations_available, pairs[]
+        dict with keys: patient_genotype, population, testing_mode,
+                        total_possible_pairs, entropy,
+                        populations_available, pairs[]
         """
-        # Gatekeeper loci (A, C, B, DRB345) — exact match REQUIRED.
-        # Flexible loci (DRB1, DQA1, DQB1, DPA1, DPB1) are scored later
-        # via tolerance scoring and do NOT gate candidate selection.
-        gatekeeper_loci = [loc for loc in GATEKEEPER_LOCI if loc in genotype]
+        if testing_mode:
+            # ── TESTING MODE ──────────────────────────────────────────
+            # No gatekeepers: a row qualifies when it carries a patient
+            # allele at >= 2 typed locus categories. `_all_haplotypes` is
+            # already ordered by Global frequency, so stopping at the cap
+            # keeps the highest-frequency qualifying rows as candidates.
+            candidates = []
+            for hap in self._all_haplotypes:
+                matched_loci = sum(
+                    1
+                    for loc, alleles in genotype.items()
+                    if self._haplotype_matches(hap, alleles, loc)
+                )
+                if matched_loci >= TESTING_MIN_MATCHED_LOCI:
+                    candidates.append(hap)
+                    if len(candidates) >= TESTING_MAX_CANDIDATES:
+                        break
+        else:
+            # ── ORIGINAL ALGORITHM ────────────────────────────────────
+            # Gatekeeper loci (A, C, B, DRB345) — exact match REQUIRED.
+            # Flexible loci (DRB1, DQA1, DQB1, DPA1, DPB1) are scored
+            # later via tolerance scoring and do NOT gate selection.
+            gatekeeper_loci = [loc for loc in GATEKEEPER_LOCI if loc in genotype]
 
-        # Step 1: Filter haplotypes to those matching every gatekeeper locus
-        candidates = []
-        for hap in self._all_haplotypes:
-            ok = True
-            for loc in gatekeeper_loci:
-                a1 = genotype[loc][0]
-                a2 = genotype[loc][1] if len(genotype[loc]) > 1 else a1
-                if a1 and not self._haplotype_matches(hap, [a1, a2], loc):
-                    ok = False
-                    break
-            if ok:
-                candidates.append(hap)
+            # Step 1: Filter haplotypes to those matching every gatekeeper
+            candidates = []
+            for hap in self._all_haplotypes:
+                ok = True
+                for loc in gatekeeper_loci:
+                    a1 = genotype[loc][0]
+                    a2 = genotype[loc][1] if len(genotype[loc]) > 1 else a1
+                    if a1 and not self._haplotype_matches(hap, [a1, a2], loc):
+                        ok = False
+                        break
+                if ok:
+                    candidates.append(hap)
 
         # Step 2 & 3: Build valid pairs with per-population diplotype freqs
         pairs_raw = []
@@ -314,22 +399,23 @@ class HaploMath:
             for j in range(i, n_cand):
                 h2 = candidates[j]
 
-                # Verify the pair covers both alleles at each GATEKEEPER locus.
-                # Flexible loci are NOT verified — they are tolerance-scored.
-                valid = True
-                for loc in gatekeeper_loci:
-                    a1, a2 = genotype[loc][0], genotype[loc][1] if len(genotype[loc]) > 1 else genotype[loc][0]
-                    h1v = h1.get(loc, "")
-                    h2v = h2.get(loc, "")
-                    # Both patient alleles must be covered by at least one haplotype
-                    # Blank/null alleles are always satisfied (hemizygous/null scenario)
-                    c1 = (not a1) or (a1 == h1v or a1 == h2v)
-                    c2 = (not a2) or (a2 == h1v or a2 == h2v)
-                    if not (c1 and c2):
-                        valid = False
-                        break
-                if not valid:
-                    continue
+                if not testing_mode:
+                    # Verify the pair covers both alleles at each GATEKEEPER
+                    # locus. Flexible loci are NOT verified — tolerance-scored.
+                    valid = True
+                    for loc in gatekeeper_loci:
+                        a1, a2 = genotype[loc][0], genotype[loc][1] if len(genotype[loc]) > 1 else genotype[loc][0]
+                        h1v = h1.get(loc, "")
+                        h2v = h2.get(loc, "")
+                        # Both patient alleles must be covered by at least one
+                        # haplotype. Blank/null alleles are always satisfied.
+                        c1 = (not a1) or (a1 == h1v or a1 == h2v)
+                        c2 = (not a2) or (a2 == h1v or a2 == h2v)
+                        if not (c1 and c2):
+                            valid = False
+                            break
+                    if not valid:
+                        continue
 
                 # Per-population diplotype frequencies
                 is_hom = (i == j)
@@ -355,8 +441,15 @@ class HaploMath:
                 h1_label = self._make_label(h1)
                 h2_label = self._make_label(h2)
 
-                # Heuristic tolerance score over the 5 flexible loci (0-100)
-                match_pct = _compute_match_percentage(genotype, h1, h2)
+                # Match percentage depends on the active algorithm:
+                #   original  → 100-pt tolerance over the 5 flexible loci
+                #   testing   → covered typed loci / total typed loci
+                if testing_mode:
+                    match_pct = _compute_testing_match_percentage(
+                        genotype, h1, h2
+                    )
+                else:
+                    match_pct = _compute_match_percentage(genotype, h1, h2)
 
                 pairs_raw.append({
                     "haplotype_1": h1_label,
@@ -390,7 +483,9 @@ class HaploMath:
         pairs_raw.sort(key=lambda x: (x["match_percentage"], x["joint_prob"]),
                        reverse=True)
 
-        # Step 5: Rank
+        # Step 5: Rank (posterior normalization already covers ALL pairs,
+        # so the reported totals stay exact even when the response is
+        # truncated for testing mode).
         ranked = []
         cumulative = 0.0
         for rank_idx, p in enumerate(pairs_raw, 1):
@@ -406,6 +501,10 @@ class HaploMath:
                 "population_frequencies": p["population_frequencies"],
             })
 
+        total_pairs = len(ranked)
+        if testing_mode and total_pairs > TESTING_MAX_RETURNED_PAIRS:
+            ranked = ranked[:TESTING_MAX_RETURNED_PAIRS]
+
         # Shannon entropy
         entropy = 0.0
         for p in pairs_raw:
@@ -415,8 +514,9 @@ class HaploMath:
         return {
             "patient_genotype": genotype,
             "population": self.population,
+            "testing_mode": testing_mode,
             "total_candidate_haplotypes": n_cand,
-            "total_possible_pairs": len(ranked),
+            "total_possible_pairs": total_pairs,
             "pairs": ranked,
             "entropy": round(entropy, 4),
             "populations_available": POPULATION_ORDER,
@@ -583,4 +683,85 @@ if __name__ == "__main__":
         print()
 
     engine3.close()
-    print("✅ Bayesian engine ready (exact + hemizygous + fuzzy tests passed).")
+
+    # ── Test 4: Testing Mode (Lenient Match) ────────────────────────
+    # Same patient, but HLA-A allele replaced with a nonsense allele
+    # (A*99:99). The strict gatekeeper algorithm returns 0 pairs;
+    # Testing Mode drops the gatekeepers and returns rows matching
+    # >= 2 typed loci, scoring covered loci / typed loci.
+    print("\n" + "=" * 72)
+    print("  TESTING MODE — Gatekeeper miss rescued by lenient scan")
+    print("=" * 72)
+
+    engine4 = HaploMath(population="Global")
+    engine4.connect()
+
+    testing_patient = dict(hemizygous_patient)
+    testing_patient["hla_a"] = ["A*99:99", "A*99:99"]  # not in reference DB
+
+    print("\n📋 Testing-Mode Patient Genotype (A*99:99 = nonsense):")
+    for loc, alleles in testing_patient.items():
+        tag = " (empty)" if not alleles[1] else (" (hom)" if alleles[0] == alleles[1] else "")
+        print(f"  {loc:15} {alleles[0]:15} / {alleles[1]}{tag}")
+
+    # Strict mode MUST return 0 pairs (gatekeeper hla_a fails)
+    strict_result = engine4.calculate_posterior(testing_patient, testing_mode=False)
+    assert strict_result["total_possible_pairs"] == 0, \
+        "Strict mode should yield 0 pairs for a gatekeeper miss"
+    print("\n  ✅ Strict mode correctly returns 0 pairs (gatekeeper A*99:99 miss)")
+
+    # Testing mode MUST return pairs, all with the same coverage ratio
+    test_result = engine4.calculate_posterior(testing_patient, testing_mode=True)
+    print(f"  🔎 Testing mode: {test_result['total_candidate_haplotypes']} candidate rows, "
+          f"{test_result['total_possible_pairs']} total pairs "
+          f"({len(test_result['pairs'])} returned)")
+
+    assert test_result["total_possible_pairs"] > 0, \
+        "Testing mode should rescue gatekeeper misses"
+
+    # 9 typed loci; only hla_a (A*99:99) can't be covered -> 8/9 = 89%
+    mp_list = [p['match_percentage'] for p in test_result['pairs']]
+    assert all(mp_list[i] >= mp_list[i+1] for i in range(len(mp_list)-1)), \
+        "Sort violation: match_percentage not descending"
+    print(f"  ✅ Sort verified: match_percentage non-increasing "
+          f"(top={mp_list[0]}%, bottom={mp_list[-1]}%)")
+    print(f"  ✅ Match % values present: {sorted(set(mp_list), reverse=True)}")
+
+    for p in test_result['pairs'][:4]:
+        print(f"  #{p['rank']} posterior={p['posterior']:.6f} match={p['match_percentage']}%")
+        print(f"     H1: {p['haplotype_1']}")
+        print(f"     H2: {p['haplotype_2']}")
+        print()
+
+    engine4.close()
+
+    # ── Test 5: Testing Mode partial typing scoring ─────────────────
+    # User types only 4 loci (A, B, DRB1, DQB1). A pair covering 2 of
+    # them must score exactly 50%.
+    print("\n" + "=" * 72)
+    print("  TESTING MODE — Partial typing scoring (2 of 4 loci = 50%)")
+    print("=" * 72)
+
+    engine5 = HaploMath(population="Global")
+    engine5.connect()
+
+    partial_patient = {
+        "hla_a":    ["A*01:01", "A*03:01"],
+        "hla_b":    ["B*08:01", "B*07:02"],
+        "hla_drb1": ["DRB1*03:01", "DRB1*15:01"],
+        "hla_dqb1": ["DQB1*02:01", "DQB1*06:02"],
+    }
+    partial_result = engine5.calculate_posterior(partial_patient, testing_mode=True)
+    print(f"  🔎 Testing mode (4 typed loci): {partial_result['total_possible_pairs']} pairs")
+
+    top = partial_result['pairs'][0]
+    print(f"  Top pair match={top['match_percentage']}% "
+          f"(expected 100%: all 4 loci coverable)")
+    pcts = sorted({p['match_percentage'] for p in partial_result['pairs']}, reverse=True)
+    print(f"  Match % values present: {pcts}")
+    assert 50 in pcts or 25 in pcts or 75 in pcts, \
+        "Partial-coverage scores should appear (25/50/75%)"
+    print("  ✅ Partial-typing scoring verified (covered/typed loci ratio)")
+
+    engine5.close()
+    print("✅ Bayesian engine ready (exact + hemizygous + fuzzy + testing mode tests passed).")

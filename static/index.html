@@ -211,6 +211,64 @@
     justify-content: center;
     gap: 12px;
   }
+  .action-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Testing Mode toggle (clinical switch) ────────────────── */
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle input { display: none; }
+  .toggle-track {
+    width: 44px;
+    height: 24px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    position: relative;
+    transition: background 0.18s, border-color 0.18s;
+    flex-shrink: 0;
+  }
+  .toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: var(--white);
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.28);
+    transition: transform 0.18s;
+  }
+  .toggle input:checked + .toggle-track {
+    background: var(--amber);
+    border-color: var(--amber);
+  }
+  .toggle input:checked + .toggle-track .toggle-thumb {
+    transform: translateX(20px);
+  }
+  .toggle-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: color 0.15s;
+  }
+  .toggle-label small {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  .toggle input:checked ~ .toggle-label { color: var(--amber); }
   .btn {
     font-family: var(--font);
     font-size: 14px;
@@ -463,7 +521,12 @@
 
   </div>
 
-  <div class="btn-row">
+  <div class="action-row">
+    <label class="toggle" title="Lenient search: no gatekeeper loci. Rows matching ≥ 2 typed loci are returned; Match % = loci covered ÷ loci typed.">
+      <input type="checkbox" id="testingMode">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      <span class="toggle-label">Testing Mode <small>(Lenient Match)</small></span>
+    </label>
     <button class="btn btn-primary" id="calcBtn" onclick="calculate()">Calculate</button>
   </div>
 
@@ -623,6 +686,9 @@ async function calculate() {
     return;
   }
 
+  // Testing Mode (Lenient Match) — default OFF, persists for the session
+  payload.testing_mode = document.getElementById("testingMode").checked;
+
   // Button loading
   const originalText = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span> Calculating…';
@@ -645,16 +711,22 @@ async function calculate() {
     // Meta bar
     const total = data.total_possible_pairs || 0;
     const ep = data.entropy !== undefined ? data.entropy : null;
+    const modeBadge = data.testing_mode
+      ? ' <span style="color:var(--amber);font-weight:700;">· Testing Mode ON</span>'
+      : "";
     resultsMeta.innerHTML =
-      `<strong>${total}</strong> possible haplotype pairs`;
+      `<strong>${total}</strong> possible haplotype pairs${modeBadge}`;
     entropyText.innerHTML =
       ep !== null ? `Entropy: <strong>${ep.toFixed(2)}</strong> bits` : "";
 
     // Table rows
     const pairs = data.imputed_pairs || [];
     if (pairs.length === 0) {
+      const emptyMsg = data.testing_mode
+        ? "No rows matched ≥ 2 typed loci in Testing Mode."
+        : "No matching haplotype pairs found.";
       tbody.innerHTML =
-        '<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">No matching haplotype pairs found.</td></tr>';
+        `<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
       resultsCount.textContent = "";
     } else {
       let html = "";
@@ -723,6 +795,20 @@ async function copyHaplotype(text, btn) {
 // ── Enter key to submit ──────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
+  const testingToggle = document.getElementById("testingMode");
+
+  // Testing Mode persists for the browser session (survives page reloads
+  // in the same tab, until manually toggled off). Defaults to OFF.
+  if (sessionStorage.getItem("haplostats_testing_mode") === "1") {
+    testingToggle.checked = true;
+  }
+  testingToggle.addEventListener("change", () => {
+    sessionStorage.setItem(
+      "haplostats_testing_mode",
+      testingToggle.checked ? "1" : "0"
+    );
+  });
+
   const inputs = document.querySelectorAll(".allele-grid input");
   for (const inp of inputs) {
     inp.addEventListener("keydown", (e) => {

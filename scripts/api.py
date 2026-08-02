@@ -117,6 +117,9 @@ class ImputeRequest(BaseModel):
     hla_dqb1:   Optional[list] = None
     hla_dpa1:   Optional[list] = None
     hla_dpb1:   Optional[list] = None
+    # Testing Mode (Lenient Match): drops gatekeeper requirements and
+    # returns rows matching >= 2 typed loci, scored as covered/typed.
+    testing_mode: bool = False
 
 
 class PopulationFrequencies(BaseModel):
@@ -144,6 +147,7 @@ class ImputeResponse(BaseModel):
     patient_genotype: dict
     total_possible_pairs: int
     entropy: float
+    testing_mode: bool = False
     populations_available: list = []
     imputed_pairs: list[ImputedPair] = []
 
@@ -206,7 +210,10 @@ def impute(request: ImputeRequest, population: str = "Global"):
 
     # Run Bayesian engine
     engine = get_engine(population)
-    result = engine.calculate_posterior(clean_genotype)
+    result = engine.calculate_posterior(
+        clean_genotype,
+        testing_mode=request.testing_mode,
+    )
 
     if "error" in result or not result.get("pairs"):
         return ImputeResponse(
@@ -218,6 +225,7 @@ def impute(request: ImputeRequest, population: str = "Global"):
             },
             total_possible_pairs=0,
             entropy=0.0,
+            testing_mode=request.testing_mode,
             populations_available=POPULATION_ORDER,
             imputed_pairs=[],
         )
@@ -252,6 +260,7 @@ def impute(request: ImputeRequest, population: str = "Global"):
         },
         total_possible_pairs=result["total_possible_pairs"],
         entropy=result.get("entropy", 0.0),
+        testing_mode=request.testing_mode,
         populations_available=POPULATION_ORDER,
         imputed_pairs=imputed_pairs,
     )
